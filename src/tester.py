@@ -12,8 +12,11 @@ class Tester(Solver):
     def load_data(self):
         self.verbose('Loading testing data '+str(self.config['solver']['test_set'])\
                      +' from '+self.config['solver']['data_path'])
-        setattr(self,'test_set',LoadDataset('test',text_only=False,use_gpu=self.paras.gpu,**self.config['solver']))
-        setattr(self,'dev_set',LoadDataset('dev',text_only=False,use_gpu=self.paras.gpu,**self.config['solver']))
+        
+        (self.mapper, _, self.test_set) = load_dataset('test',
+            text_only=False, use_gpu=self.paras.gpu, **self.config['solver'])
+        (_, _, self.dev_set) = load_dataset('dev', text_only=False, 
+            use_gpu=self.paras.gpu,**self.config['solver'])
 
     def set_model(self):
         ''' Load saved ASR'''

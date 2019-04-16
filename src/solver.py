@@ -9,8 +9,8 @@ from joblib import Parallel, delayed
 from tqdm import tqdm
 import torch.nn.functional as F
 from asr import Seq2Seq
-from dataset import LoadDataset
-from postprocess import Mapper,cal_acc,calc_er,draw_att 
+from dataset import load_dataset
+from postprocess import calc_acc,calc_er,draw_att 
 
 from lm import LM
 
@@ -21,17 +21,21 @@ GRAD_CLIP = 5
 class Solver():
     ''' Super class Solver for all kinds of tasks'''
     def __init__(self,config, paras):
-        # General Settings
         self.config = config
         self.paras = paras
-        self.device = torch.device('cuda') if torch.cuda.is_available() else torch.device('cpu')
+        if torch.cuda.is_available(): 
+            self.device = torch.device('cuda') 
+            self.paras.gpu = True
+        else:
+            self.device = torch.device('cpu')
+            self.paras.gpu = False
 
-        if not os.path.exists(paras.ckpdir):os.makedirs(paras.ckpdir)
+        if not os.path.exists(paras.ckpdir):
+            os.makedirs(paras.ckpdir)
+
         self.ckpdir = os.path.join(paras.ckpdir,self.paras.name)
-        if not os.path.exists(self.ckpdir):os.makedirs(self.ckpdir)
-
-        # Load Mapper for idx2token
-        self.mapper = Mapper()
+        if not os.path.exists(self.ckpdir):
+            os.makedirs(self.ckpdir)
 
     def verbose(self,msg):
         ''' Verbose function for print information to stdout'''
@@ -60,9 +64,9 @@ class Trainer(Solver):
         
     def load_data(self):
         ''' Load date for training/validation'''
-        self.dataset, self.train_set = LoadDataset(self.config['solver']['train_index_path'], 
-            use_gpu=self.paras.gpu, return_dataset=True)
-        self.eval_set = LoadDataset(self.config['solver']['eval_index_path'], use_gpu=self.paras.gpu)
+        (self.mapper, _ ,self.train_set) = load_dataset(self.config['solver']['train_index_path'], 
+            use_gpu=self.paras.gpu)
+        (_, _, self.eval_set) = load_dataset(self.config['solver']['eval_index_path'], use_gpu=self.paras.gpu)
         
     def set_model(self):
         ''' Setup ASR'''
@@ -130,7 +134,7 @@ class Trainer(Solver):
                 
                 # Logger
                 self.write_log('loss',loss_log)
-                self.write_log('acc',{'train':cal_acc(att_pred,label)})
+                self.write_log('acc',{'train':calc_acc(att_pred,label)})
                 if self.step % TRAIN_WER_STEP ==0:
                     self.write_log('error rate',
                                    {'train':calc_er(att_pred,label,mapper=self.mapper)})
@@ -180,37 +184,21 @@ class Trainer(Solver):
 
             # Compute attention loss & get decoding results
             label = y[:,1:ans_len+1].contiguous()
+           
             seq_loss = self.seq_loss(att_pred[:,:ans_len,:].contiguous().view(-1,att_pred.shape[-1]),label.view(-1))
             seq_loss = torch.sum(seq_loss.view(x.shape[0],-1),dim=-1)/torch.sum(y!=0,dim=-1)\
                 .to(device = self.device,dtype=torch.float32) # Sum each uttr and devide by length
             seq_loss = torch.mean(seq_loss) # Mean by batch
+            
             val_att += seq_loss.detach()*int(x.shape[0])
             
             t1, t2 = calc_er(att_pred,label,mapper=self.mapper,get_sentence=True)
             all_pred.append(t1)
             all_true.append(t2)
-            val_acc += cal_acc(att_pred,label)*int(x.shape[0])
+            val_acc += calc_acc(att_pred,label)*int(x.shape[0])
             val_cer += calc_er(att_pred,label,mapper=self.mapper)*int(x.shape[0])
             
             val_len += int(x.shape[0])
-        
-        '''
-        This stuff achieves the same as the best_hyp.txt
-        # perform testing on a single batch from the evaluation set
-        _, (x, y) = next(enumerate(self.eval_set))
-        x = x.squeeze(0).to(device = self.device,dtype=torch.float32)
-        y = y.squeeze(0).to(device = self.device,dtype=torch.long)
-        state_len = torch.sum(torch.sum(x.cpu(),dim=-1)!=0, dim=-1)
-        state_len = [int(sl) for sl in state_len]
-        ans_len = int(torch.max(torch.sum(y!=0,dim=-1)))
-            
-        # att_pred is a [batch, seq_len, out_size] tensor
-        _, att_pred, _ = self.asr_model(x, ans_len+VAL_STEP,state_len=state_len)
-        for i in range(y.shape[0]):
-            pred_i = att_pred[i, :, :]
-            print('OG vs. pred: "{}" - "{}"'.format(self.dataset.decode(y[i, :].view(y.shape[1])),
-                self.dataset.decode(torch.argmax(pred_i, dim=-1))))        
-        '''
 
         # Logger
         val_loss = val_att
@@ -264,10 +252,10 @@ class RNNLM_Trainer(Solver):
         ''' Load training / evaluation sets '''
         # For sanity we don't sort on the fly and instead create the indexes
         # needed and store as files. This helps alot with debugging
-        self.train_set = LoadDataset(self.config['solver']['train_index_path'], 
+        (self.mapper, _, self.train_set) = load_dataset(self.config['solver']['train_index_path'], 
             batch_size=self.config['solver']['batch_size'], 
             use_gpu=self.paras.gpu, text_only=True)
-        self.eval_set = LoadDataset(self.config['solver']['eval_index_path'], 
+        (_, _, self.eval_set) = load_dataset(self.config['solver']['eval_index_path'], 
             batch_size=self.config['solver']['eval_batch_size'],
             use_gpu=self.paras.gpu, text_only=True)
 

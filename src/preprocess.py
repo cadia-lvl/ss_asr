@@ -270,6 +270,11 @@ def sort_index(index:str, sort_key:str, sort_ascending:bool=True):
     frame.to_csv(index, sep='\t', index=False)
 
 def update_slen(index:str):
+    '''
+    Sometimes, the calculates cleaned string length is wrong. This
+    simple function can be run on an index to make sure that the
+    length is equal to the actual length of the normalized strings
+    '''
     from dataset import load_df
     frame = load_df(index)
     for i, row in frame.iterrows():
@@ -282,5 +287,5 @@ if __name__ == '__main__':
     #make_split('./data/processed/index.tsv')
     make_split('./data/ivona_processed/index.tsv')
     #clean_index_text('./data/ivona_processed/index.tsv')
-    #sort_index('./data/ivona_processed/eval.tsv', 's_len', sort_ascending=False)
+    #sort_index('./data/ivona_processed/index.tsv', 's_len', sort_ascending=False)
     #update_slen('./data/ivona_processed/index.tsv')

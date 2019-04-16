@@ -10,7 +10,9 @@ import typing
 
 from torch.utils.data import DataLoader, Dataset
 
-from preprocess import ALL_CHARS, TOKENS, SOS_TKN
+from preprocess import ALL_CHARS, TOKENS, SOS_TKN, EOS_TKN
+from postprocess import trim_eos
+
 
 def load_df(path:str):
     '''
@@ -209,8 +211,36 @@ class ASRDataset(Dataset):
             return (self.get_batched_fbanks(self.batch_inds[idx]), 
                 self.get_batched_texts(self.batch_inds[idx]))
 
-def LoadDataset(path: str, batch_size:int=1, n_jobs:int=8, text_only:bool=False, 
-    use_gpu:bool=False, return_dataset=False, sort_key='', sort_ascending=True):
+class Mapper():
+    '''
+    A simple class that can easilly be passed around
+    for translating indexes to strings, given the tokens
+    '''
+    def __init__(self, tokens=TOKENS+ALL_CHARS):
+        self.mapping = {tokens[i]: i for i in range(len(tokens))}
+        self.r_mapping = {v:k for k,v in self.mapping.items()}
+
+    def get_dim(self):
+        return len(self.mapping)
+
+    def translate(self, seq, return_string=False):
+        '''
+        Input arguments:
+        seq (torch.Tensor): A tensor containing a sequence 
+        of indexes
+        return_string: If true, a string is returned, rather 
+        than a list of characters.
+        '''
+        new_seq = []
+        for c in trim_eos(seq):
+            new_seq.append(self.r_mapping[c])
+
+        if return_string:
+            new_seq = ''.join(new_seq).replace(SOS_TKN,'').replace(EOS_TKN,'')
+        return new_seq
+
+def load_dataset(path: str, batch_size:int=1, n_jobs:int=8, text_only:bool=False, 
+    use_gpu:bool=False, sort_key='', sort_ascending=True):
     '''
     Input arguments:
     * path (str) : A full or relative path to a train index 
@@ -237,20 +267,16 @@ def LoadDataset(path: str, batch_size:int=1, n_jobs:int=8, text_only:bool=False,
 
     dataset = ASRDataset(path, batch_size, text_only=text_only, 
         sort_key=sort_key, sort_ascending=sort_ascending)
-    if return_dataset:
-        return dataset, DataLoader(dataset, 
-            batch_size=1, num_workers=n_jobs, pin_memory=use_gpu)
-    else:
-        return DataLoader(dataset, batch_size=1, num_workers=n_jobs, 
-            pin_memory=use_gpu)
 
+    return Mapper(), dataset, DataLoader(dataset, batch_size=1, 
+        num_workers=n_jobs, pin_memory=use_gpu)
 
 def simple_dataset_test(index_path='data/processed/index.tsv'):
     '''
-    Sanity test for a batch size of 1 , add the dataset to the return of LoadDataset
+    Sanity test for a batch size of 1 , add the dataset to the return of load_dataset
     to test
     '''
-    dataset, dataloader = LoadDataset(index_path, text_only=True)
+    dataset, dataloader = load_dataset(index_path, text_only=True)
 
     for batch_idx, data in enumerate(dataloader):
         for i in range(data.shape[0]):
@@ -260,7 +286,7 @@ def simple_shape_check(index_path='data/processed/index.tsv'):
     '''
     Just for checking shapes of things
     '''
-    dataloader = LoadDataset(index_path, batch_size=32)
+    dataloader = load_dataset(index_path, batch_size=32)
     _ , data = next(enumerate(dataloader))
     
     print(data[0].shape)

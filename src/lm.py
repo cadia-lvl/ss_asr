@@ -3,7 +3,7 @@ import torch.nn as nn
 import torch.nn.functional as F
 import numpy as np
 
-from dataset import LoadDataset
+from dataset import load_dataset
 
 
 class LM(nn.Module):
@@ -18,13 +18,14 @@ class LM(nn.Module):
         * dropout_rate: The dropout rate
         '''
         super(LM, self).__init__()
-        
+
         self.emb = nn.Embedding(out_dim, emb_dim)
         
         self.drop_1 = nn.Dropout(dropout_rate)
         self.drop_2 = nn.Dropout(dropout_rate)
         
         self.lstm = nn.LSTM(
+            num_layers=num_layers,
             input_size=emb_dim,
             hidden_size= hidden_dim,
             dropout=dropout_rate)
@@ -63,8 +64,7 @@ def test_simple_lm(index_path='./data/ivona_processed/eval.tsv'):
     Performs a simple sanity LM test on a single sample, given some
     dataset.
     '''
-    dataset, dataloader = LoadDataset(index_path, text_only=True, 
-        return_dataset=True)
+    (_, dataset, dataloader) = load_dataset(index_path, text_only=True)
 
     batch_idx, data = next(enumerate(dataloader))
     data = data.long()

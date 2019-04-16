@@ -2,33 +2,7 @@ import torch
 import numpy as np
 import editdistance as ed
 
-from preprocess import ALL_CHARS, TOKENS, SOS_TKN
-
-class Mapper():
-    '''Mapper for index2token'''
-    def __init__(self, tokens=TOKENS+ALL_CHARS):
-        self.mapping = {tokens[i]: i for i in range(len(tokens))}
-        self.r_mapping = {v:k for k,v in self.mapping.items()}
-
-    def get_dim(self):
-        return len(self.mapping)
-
-    def translate(self,seq,return_string=False):
-        new_seq = []
-        for c in trim_eos(seq):
-            new_seq.append(self.r_mapping[c])
-
-        if return_string:
-            new_seq = ''.join(new_seq).replace('<sos>','').replace('<eos>','')
-        return new_seq
-
-def trim_eos(seqence):
-    new_pred = []
-    for char in seqence:
-        new_pred.append(int(char))
-        if char == 1:
-            break
-    return new_pred
+from preprocess import ALL_CHARS, TOKENS, SOS_TKN, EOS_TKN
 
 class Hypothesis:
     '''Hypothesis for beam search decoding.
@@ -98,7 +72,8 @@ class Hypothesis:
         return self.emb(torch.LongTensor([idx]).to(next(self.emb.parameters()).device))
 
 
-def cal_acc(pred,label):
+def calc_acc(pred, label):
+    # TODO: ADD DOCUMENTATION
     pred = np.argmax(pred.cpu().detach(),axis=-1)
     label = label.cpu()
     accs = []
@@ -113,6 +88,7 @@ def cal_acc(pred,label):
     return sum(accs)/len(accs)
 
 def calc_er(pred,label,mapper,get_sentence=False, argmax=True):
+    # TODO: ADD DOCUMENTATION
     if argmax:
         pred = np.argmax(pred.cpu().detach(),axis=-1)
     label = label.cpu()
@@ -129,7 +105,17 @@ def calc_er(pred,label,mapper,get_sentence=False, argmax=True):
 def draw_att(att_list,hyp_txt):
     attmaps = []
     for att,hyp in zip(att_list[0],np.argmax(hyp_txt.cpu().detach(),axis=-1)):
+        # the length without any trailing symbols after EOS token
         att_len = len(trim_eos(hyp))
         att = att.detach().cpu()
         attmaps.append(torch.stack([att,att,att],dim=0)[:,:att_len,:]) # +1 for att. @ <eos>
     return attmaps
+
+def trim_eos(seqence):
+    new_pred = []
+    for char in seqence:
+        new_pred.append(int(char))
+        # HACK: 1 maps to '>', generally speaking
+        if char == 1:
+            break
+    return new_pred

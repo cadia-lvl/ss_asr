@@ -1,10 +1,13 @@
 #!/usr/bin/env python
 # coding: utf-8
+import os
+import sys
 import yaml
 import torch
 import random
 import argparse
 import numpy as np
+
 
 # Make cudnn CTC deterministic
 torch.backends.cudnn.deterministic = True
@@ -18,12 +21,21 @@ parser.add_argument('--ckpdir', default='result/', type=str, help='Checkpoint/Re
 parser.add_argument('--load', default=None, type=str, help='Load pre-trained model', required=False)
 parser.add_argument('--seed', default=0, type=int, help='Random seed for reproducable results.', required=False)
 parser.add_argument('--njobs', default=1, type=int, help='Number of threads for decoding.', required=False)
-parser.add_argument('--cpu', action='store_true', help='Disable GPU training.')
+parser.add_argument('--verbose', default=True, type=bool, required=False)
 
 paras = parser.parse_args()
-setattr(paras,'gpu',not paras.cpu)
-setattr(paras,'verbose',not paras.no_msg)
-config = yaml.load(open(paras.config,'r'))
+
+# check if not loading and using same name
+if paras.name is not None and paras.load is None:
+    # user has given a certain name, but not indicated
+    # that a model is to be loaded. Check if /results/name/rnnlm
+    # exists and exit if True
+    if os.path.isfile(os.path.join(paras.ckpdir, paras.name, 'rnnlm')):
+        print('A pretrained LM was found at: "{}". Use the load parameter to advance'
+            .format(os.path.join(paras.ckpdir, paras.name)))
+        sys.exit()
+
+config = yaml.load(open(paras.config,'r'), Loader=yaml.FullLoader)
 
 random.seed(paras.seed)
 np.random.seed(paras.seed)

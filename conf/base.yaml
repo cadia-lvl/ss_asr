@@ -28,9 +28,5 @@ solver:
   # Decoding options
   max_decode_step_ratio: 0.1
   decode_beam_size: 20
-  decode_lm_path: 'result/ice/rnnlm'
+  decode_lm_path: 'result/complete_ivona_lm/rnnlm'
   decode_lm_weight: 0.5
-
-other:
-  verbose: True
-  se
