@@ -1,4 +1,9 @@
 env/
-.vscode/
 data/
+log/
+result/
+
+
+.vscode/
 .mypy_cache/
+__pycache__/

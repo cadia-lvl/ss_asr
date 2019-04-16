@@ -1,0 +1,23 @@
+rnn_lm:
+  optimizer: 
+    type: 'Adam'                              # Optimizer used for training (adam)
+    learning_rate: 0.0001                     # Learning rate for opt
+  model_para:
+    emb_dim: 650
+    hidden_dim: 650
+    num_layers: 2
+    dropout_rate: 0.5
+
+solver:
+  train_index_path: './data/ivona_processed/train.tsv'
+  eval_index_path: './data/ivona_processed/eval.tsv'
+  # Data options
+  n_jobs: 4                                   # Subprocess used for torch Dataloader
+  max_label_len: 400                          # Max length for output sequence (0 for no restriction)
+  batch_size: 32                              # training batch size
+  total_steps: 3000000                         # total steps for training                         
+  # Validation options
+  eval_batch_size: 32                            
+  eval_step: 2000
+  # Misc
+  max_timestep: 0
