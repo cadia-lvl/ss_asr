@@ -1,0 +1,19 @@
+rnn_lm:
+  optimizer: 
+    type: 'Adam'                        # Optimizer used for training
+    learning_rate: 0.001                # Learning rate for optimizer
+  model_para:
+    emb_dim: 650                        # Word embedding dimensionality
+    hidden_dim: 650                     # Hidden dimensionality of RNN unit
+    num_layers: 2                       # Number of RNN layers
+    dropout_rate: 0.5                   # Dropout rate used in RNNLM
+
+solver:
+  # Paths to prepro indexes
+  train_index_path: './data/ivona_processed/train.tsv'
+  eval_index_path: './data/ivona_processed/eval.tsv'
+  n_jobs: 4                             # Number of subprocesses used for torch Dataloader
+  batch_size: 32                        # total steps for training
+  total_steps: 3000000                  # total steps for training      
+  eval_batch_size: 32                   # validation batch size
+  eval_step: 2000                       # interval of validation steps

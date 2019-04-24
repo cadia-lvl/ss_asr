@@ -1,17 +1,14 @@
 import sys
-
-import torch
-import pandas as pd
-import numpy as np
-
+import typing
 from math import ceil
 
-import typing
-
+import numpy as np
+import pandas as pd
+import torch
 from torch.utils.data import DataLoader, Dataset
 
-from preprocess import ALL_CHARS, TOKENS, SOS_TKN, EOS_TKN
 from postprocess import trim_eos
+from preprocess import ALL_CHARS, EOS_TKN, SOS_TKN, TOKENS
 
 
 def load_df(path:str):
@@ -30,7 +27,7 @@ def load_df(path:str):
 class ASRDataset(Dataset):
     def __init__(self, tsv_file: str, batch_size:int=32,
             chars:str=TOKENS+ALL_CHARS, text_only:bool=False, 
-            sort_key:str='', sort_ascending:bool=True):
+            sort_key:str='', sort_ascending:bool=True, drop_rate:float=0.0):
         '''
         Input Arguments:
         * tsv_file (string): Path to tsv index
@@ -42,6 +39,8 @@ class ASRDataset(Dataset):
         will be sorted by the supplied key
         * sort_ascending (bool): if True, dataset is sorted by 
         the key in ascending order, else descending order.
+        * drop_rate (float): The probability of dropping a character
+        upon retrieval (used as a noise model)
 
         Expected format of index
         (normalized_text, path_to_fbank, s_len, 
@@ -64,6 +63,8 @@ class ASRDataset(Dataset):
         self.num_samples = len(self._frame)
 
         self.batch_inds = np.arange(0, self.num_samples+1, self.batch_size)
+
+        self.drop_rate = drop_rate
 
     def char2idx(self, char: str) -> int:
         '''
@@ -109,40 +110,46 @@ class ASRDataset(Dataset):
         fbanks = [self.get_fbank_by_path(p) for p in paths]
         return np.stack(fbanks)
     
-    def get_text(self, idx:int) -> str:
+    def get_text(self, idx:int, drop_rate:float=0.0) -> str:
         '''
+        Input arguments:
+        * idx (int): An index into the dataframe
+        * drop_rate (float): Probability of each character
+        in the string being dropped from the sample.
+        
         Returns the text at the given index
         '''
-        return self._frame.iloc[idx]['normalized_text']
+        text = self._frame.iloc[idx]['normalized_text']
+        if drop_rate > 0:
+            dropped_text = ''
+            for c in text:
+                if (c in [EOS_TKN, SOS_TKN]) or (np.random.rand() > drop_rate):
+                    # we don't drop the EOS and SOS tokens
+                    dropped_text += c
+            return dropped_text
+            
+        return text
 
-    def get_batched_texts(self, start_idx:int, pad_token:str=SOS_TKN) -> np.ndarray:
+    def get_batched_texts(self, start_idx:int, pad_token:str=SOS_TKN, 
+        drop_rate:float=0.0) -> np.ndarray:
         '''
+        Input arguments :
+        * start_idx (int): The index into the dataframe of the first 
+        element in the batch
+        * pad_token (str): The token used for padding strings
         Returns a [batch_size, max_len] array of the text for
         the given batch start index in the encoded representation
         where each sample has been padded up to the maximum length
+        * drop_rate: The probability of each character being dropped
         '''
-        encoded = [self.encode(self.get_text(idx)) 
+        encoded = [self.encode(self.get_text(idx, drop_rate)) 
             for idx in self._batch_range(start_idx)]
-
         lens = [s.shape[0] for s in encoded]
-        max_len = max(lens)
-        if lens != sorted(lens, reverse=True):
-            print(lens)
-            t_lens = []
-            for idx in self._batch_range(start_idx):
-                text = self.get_text(idx)
-                print(text)
-                t_lens.append(len(text))
-                #print(self.encode(self.get_text(idx)))
-            print(t_lens)
-            print(t_lens == lens)
-            sys.exit()
-
+        max_len = max(lens)        
         out = np.zeros([self.batch_size, max_len]) + self.char2idx(pad_token)
     
         for i, e in enumerate(encoded):
             out[i,:e.shape[0]] = e
-
         return out
 
     def _batch_range(self, start_idx:int) -> range:
@@ -204,9 +211,19 @@ class ASRDataset(Dataset):
         The dataset is not ordered in any particular
         way and file ids in most cases do not correspond
         with any particular ordering.
+        
+        Returns:
+        * (fbanks, text), by default
+        * (text), if text_only
+        * (text, noisy_text) if text_only and drop_rate > 0
         '''
         if self.text_only:
-            return self.get_batched_texts(self.batch_inds[idx])
+            if self.drop_rate > 0:
+                return (self.get_batched_texts(self.batch_inds[idx]),
+                    self.get_batched_texts(self.batch_inds[idx], 
+                    drop_rate=self.drop_rate))
+            else:
+                return self.get_batched_texts(self.batch_inds[idx])
         else:
             return (self.get_batched_fbanks(self.batch_inds[idx]), 
                 self.get_batched_texts(self.batch_inds[idx]))
@@ -223,24 +240,22 @@ class Mapper():
     def get_dim(self):
         return len(self.mapping)
 
-    def translate(self, seq, return_string=False):
+    def translate(self, seq):
         '''
         Input arguments:
         seq (torch.Tensor): A tensor containing a sequence 
         of indexes
-        return_string: If true, a string is returned, rather 
-        than a list of characters.
+        Returns: The decoded string
         '''
         new_seq = []
         for c in trim_eos(seq):
             new_seq.append(self.r_mapping[c])
 
-        if return_string:
-            new_seq = ''.join(new_seq).replace(SOS_TKN,'').replace(EOS_TKN,'')
+        new_seq = ''.join(new_seq).replace(SOS_TKN,'').replace(EOS_TKN,'')
         return new_seq
 
 def load_dataset(path: str, batch_size:int=1, n_jobs:int=8, text_only:bool=False, 
-    use_gpu:bool=False, sort_key='', sort_ascending=True):
+    use_gpu:bool=False, sort_key='', sort_ascending=True, drop_rate:float=0.0):
     '''
     Input arguments:
     * path (str) : A full or relative path to a train index 
@@ -266,31 +281,47 @@ def load_dataset(path: str, batch_size:int=1, n_jobs:int=8, text_only:bool=False
     '''
 
     dataset = ASRDataset(path, batch_size, text_only=text_only, 
-        sort_key=sort_key, sort_ascending=sort_ascending)
+        sort_key=sort_key, sort_ascending=sort_ascending, drop_rate=drop_rate)
 
     return Mapper(), dataset, DataLoader(dataset, batch_size=1, 
         num_workers=n_jobs, pin_memory=use_gpu)
 
-def simple_dataset_test(index_path='data/processed/index.tsv'):
-    '''
-    Sanity test for a batch size of 1 , add the dataset to the return of load_dataset
-    to test
-    '''
-    dataset, dataloader = load_dataset(index_path, text_only=True)
 
-    for batch_idx, data in enumerate(dataloader):
-        for i in range(data.shape[0]):
-            print(batch_idx, dataset.decode_from_numpy(np.reshape(data[i,:,:], [data.shape[2]])))
 
-def simple_shape_check(index_path='data/processed/index.tsv'):
+def prepare_x(x, device=torch.device('cpu')):
     '''
-    Just for checking shapes of things
-    '''
-    dataloader = load_dataset(index_path, batch_size=32)
-    _ , data = next(enumerate(dataloader))
+    Input arguments:
+    * x: A [1, i, j, k] shaped tensor (optional)
+    * device: Device for storing batch (torch.device) 
     
-    print(data[0].shape)
-    print(data[1].shape)
+    Returns: 
+    x: A [i, j, k] shaped tensor
+    x_lens: An i-length list of unpadded f-bank lengths
+    '''
+    x = x.squeeze(0).to(device=device, dtype=torch.float32)
+    # HACK: hard coded the 0 symbol        
+    x_lens = np.sum(np.sum(x.cpu().data.numpy(), axis=-1)!=0, axis=-1)
+    x_lens = [int(sl) for sl in x_lens]
+    
+    return x, x_lens
 
-if __name__ == '__main__':
-    simple_shape_check()
+
+def prepare_y(y, device=torch.device('cpu')):
+    '''
+    Input arguments:
+    * y: A [1, l, m] shaped tensor (optional)
+    * device: Device for storing batch (torch.device) 
+
+    Returns:
+    y: A [l, m] shaped tensor
+    state_len: An l-long list of unpadded text lengths
+    '''
+    y = y.squeeze(0).to(device=device, dtype=torch.long)
+    # HACK: hard coded the 0 symbol
+    # BUG: This also has the effect that "<" is never counted
+    # a character. and thus the string "<hello>" has a length
+    # of 6, and not 7. For that reason, we add a one to the count
+    # below.
+    y_lens = [int(l) + 1 for l in torch.sum(y!=0, dim=-1)]
+
+    return y, y_lens

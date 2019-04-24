@@ -8,19 +8,31 @@ import random
 import argparse
 import numpy as np
 
-# Make cudnn CTC deterministic
+from solver import ASR_Trainer
+
+
 torch.backends.cudnn.deterministic = True
 
 # Arguments
 parser = argparse.ArgumentParser(description='Training E2E asr.')
-parser.add_argument('--config', type=str, help='Path to experiment config.')
-parser.add_argument('--name', default=None, type=str, help='Name for logging.')
-parser.add_argument('--logdir', default='log/', type=str, help='Logging path.', required=False)
-parser.add_argument('--ckpdir', default='result/', type=str, help='Checkpoint/Result path.', required=False)
-parser.add_argument('--load', default=None, type=str, help='Load pre-trained model', required=False)
-parser.add_argument('--seed', default=0, type=int, help='Random seed for reproducable results.', required=False)
-parser.add_argument('--njobs', default=1, type=int, help='Number of threads for decoding.', required=False)
-parser.add_argument('--verbose', default=True, type=bool, required=False)
+
+parser.add_argument('--config', type=str, 
+    default='./conf/asr_confs/test.yaml', 
+    help='Path to experiment config.')
+parser.add_argument('--name', type=str, help='Name for logging.',
+    default='las_test')
+parser.add_argument('--logdir', default='log/', 
+    type=str, help='Logging path.', required=False)
+parser.add_argument('--ckpdir', default='result/', 
+    type=str, help='Checkpoint/Result path.', required=False)
+parser.add_argument('--load', default=None, 
+    type=str, help='Load pre-trained model', required=False)
+parser.add_argument('--seed', default=1, type=int, 
+    help='Random seed for reproducable results.', required=False)
+parser.add_argument('--njobs', default=1, type=int, 
+    help='Number of threads for decoding.', required=False)
+parser.add_argument('--verbose', default=True, 
+    type=bool, required=False)
 
 paras = parser.parse_args()
 
@@ -41,10 +53,7 @@ np.random.seed(paras.seed)
 torch.manual_seed(paras.seed)
 if torch.cuda.is_available(): torch.cuda.manual_seed_all(paras.seed)
 
-
-from solver import Trainer as Solver
-
-solver = Solver(config,paras)
-solver.load_data()
-solver.set_model()
-solver.exec()
+trainer = ASR_Trainer(config,paras)
+trainer.load_data()
+trainer.set_model()
+trainer.exec()

@@ -1,0 +1,27 @@
+asr_model:
+  optimizer:
+    type: 'Adadelta'                    # Optimizer used for training (not mentioned in LAS)      
+    learning_rate: 1.0                  # Learning rate for opt (not mentioned in LAS)
+  encoder:                           
+    state_size: 256                     # The state size of the LSTM used in the encoder (LAS approved)
+  attention:                                  
+    mlp_out_size: 128                   # The dimension projected to by the phi and psi nets
+  decoder:                                  
+    state_size: 256                     # The state size of the LSTM used in the decoder (LAS approved)
+  tf_rate: 0.9                          # Teacher forcing rate (LAS approved)
+  feature_dim: 40                       # Dimensionality of fbanks (has to be same as used in prepro) (LAS approved)
+
+solver:
+  # Paths to prepro indexes
+  train_index_path: './data/processed/index.tsv'
+  eval_index_path: './data/processed/eval_index.tsv'
+  test_index_path: None
+  n_jobs: 8                             # Number of subprocesses used for Dataloader (LAS neutral)
+  batch_size: 2                         # training batch size (LAS approved)
+  total_steps: 100                      # total steps for training (LAS neutral)
+  eval_batch_size: 2                    # validation batch size (LAS approved)                                                         
+  eval_step: 2                          # interval of validation steps (not mentioned in LAS)
+  # Path to pretrained LM
+  decode_lm_path: 'result/complete_ivona_lm/rnnlm'
+  decode_lm_weight: 0.5
+

@@ -1,7 +1,7 @@
+import numpy as np
 import torch
 import torch.nn as nn
 import torch.nn.functional as F
-import numpy as np
 
 from dataset import load_dataset
 
@@ -57,44 +57,3 @@ class LM(nn.Module):
         outputs = self.out(self.drop_2(outputs))
 
         return hidden, outputs
-
-
-def test_simple_lm(index_path='./data/ivona_processed/eval.tsv'):
-    '''
-    Performs a simple sanity LM test on a single sample, given some
-    dataset.
-    '''
-    (_, dataset, dataloader) = load_dataset(index_path, text_only=True)
-
-    batch_idx, data = next(enumerate(dataloader))
-    data = data.long()
-
-    lm = torch.load('result/complete_ivona_lm/rnnlm')
-    
-    lm_hidden = None
-
-    corrects = 0 
-    for i in range(1, data.shape[2]):
-        current_char = data[:, :, i]
-        if i + 1 < data.shape[2]:
-            next_char = data[:, :, i+1]
-
-        lm_hidden, lm_out = lm(current_char, [1], lm_hidden)
-        print(F.softmax(lm_out.view(lm_out.shape[2])))
-        #print(F.softmax(lm_out))
-        prediction = dataset.idx2char(torch.argmax(lm_out).item())
-        
-        current_char = dataset.idx2char(data[0, 0, i].item())
-        if i+1  < data.shape[2]: 
-            next_char = dataset.idx2char(data[0, 0, i+1].item())
-
-            print('current: {0}, next: {1}, prediction: {2}'
-                .format(current_char, next_char, prediction))
-
-            if next_char == prediction: corrects += 1
-    
-    print('The model had accuracy of {}%'.format(100*corrects/data.shape[2]))
-    
-if __name__ == '__main__':
-    test_simple_lm()
-

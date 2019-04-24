@@ -33,9 +33,10 @@ from librosa.feature import melspectrogram
 
 CHARS = 'abcdefghijklmnoprstuvxy0123456789'
 ICE_CHARS = 'áéíóúýæöþð'
-# TODO: The question mark is omitted and we will therefore 
-# have quite a few <UNK> in the processed texts. Should consider
-# adding it.
+# TODO: Seems it is standard to omitt the question mark
+# so perhaps we should just remove it from the text during
+# preprocessing. (The '.' is prolly very helpful for predicting
+# when to emmitt the <EOS>)
 SPECIAL_CHARS = ' .,?'
 ALL_CHARS = CHARS + ICE_CHARS + SPECIAL_CHARS
 
@@ -285,7 +286,9 @@ def update_slen(index:str):
 if __name__ == '__main__':
     #preprocess('data/ivona_speech_data/ivona_txt', 'data/ivona_speech_data/Kristjan_export', processed_dir='data/ivona_processed')
     #make_split('./data/processed/index.tsv')
-    make_split('./data/ivona_processed/index.tsv')
+    #make_split('./data/ivona_processed/index.tsv')
     #clean_index_text('./data/ivona_processed/index.tsv')
     #sort_index('./data/ivona_processed/index.tsv', 's_len', sort_ascending=False)
     #update_slen('./data/ivona_processed/index.tsv')
+    sort_index('./data/processed/index.tsv', 'unpadded_num_frames', sort_ascending=False)
+
