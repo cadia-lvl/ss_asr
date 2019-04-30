@@ -33,22 +33,22 @@ class ASR(nn.Module):
 
         self.tf_rate = model_para['tf_rate']
 
-        self.global_step = 0
-        self.best_val_ed = 10.0
-
         self.init_parameters()
 
-    def set_global_step(self, step:int):
-        self.global_step = step
+    def get_attention(self):
+        return self.attention
+    
+    def get_listener(self):
+        return self.encoder
 
-    def get_global_step(self):
-        return self.global_step
+    def get_speller(self):
+        return self.decoder
 
-    def set_best_val(self, val):
-        self.best_val_ed = val
-
-    def get_best_val(self):
-        return self.best_val_ed
+    def get_char_emb(self):
+        return self.embed
+    
+    def get_char_trans(self):
+        return self.char_trans
 
     def load_lm(self,decode_lm_weight,decode_lm_path,**kwargs):
         # Load RNNLM (for inference only)
@@ -87,6 +87,7 @@ class ASR(nn.Module):
         # Decode
         for t in range(decode_step):
             # Attend (inputs current state of first layer, encoded features)
+            # shapes: attn_score [batch_size, encode_steps]
             attention_score, context = self.attention(
                 self.decoder.state_list[0], encode_feature, encode_len)
             # Spell (inputs context + embedded last character)                
@@ -97,7 +98,8 @@ class ASR(nn.Module):
             cur_char = self.char_trans(dec_out)
 
             # Teacher forcing
-            if (teacher is not None) and t < decode_step - 1:
+            if teacher is not None:
+                # and t < decode_step - 1:
                 if random.random() <= self.tf_rate:
                     last_char = teacher[:,t+1,:]
                 else:
@@ -107,12 +109,14 @@ class ASR(nn.Module):
                 last_char = self.embed(torch.argmax(cur_char,dim=-1))
 
             output_char_seq.append(cur_char)
-            output_att_seq.append(attention_score.cpu())
+            output_att_seq.append(attention_score.cpu().detach())
 
         att_output = torch.stack(output_char_seq, dim=1)
-        att_map = torch.stack(output_att_seq, dim=1)
 
-        return encode_len, att_output, att_map
+        # shape: [batch_size, encode_steps, decode_steps]
+        [batch_size, encode_step, _] = encode_feature.shape 
+        output_att_seq = torch.stack(output_att_seq, dim=1).view(batch_size, encode_step, decode_step)
+        return encode_len, att_output, output_att_seq
 
     def init_parameters(self):
         def lecun_normal_init_parameters(module):
@@ -150,8 +154,9 @@ class ASR(nn.Module):
 
         lecun_normal_init_parameters(self)
         self.embed.weight.data.normal_(0, 1)
-        set_forget_bias_to_one(self.decoder.lstm.bias_ih)
-    
+        set_forget_bias_to_one(self.decoder.layer_1.bias_ih)
+        set_forget_bias_to_one(self.decoder.layer_2.bias_ih)
+
     def beam_decode(self, audio_feature, decode_step, state_len, decode_beam_size):
         '''
         Beam decode returns top N hyps for each input sequence
@@ -247,6 +252,9 @@ class Listener(nn.Module):
         self.blstm_3 = pBLSTM(self.state_size*2*2, self.state_size)
         self.blstm_4 = nn.LSTM(self.state_size*2*2, self.state_size, 
             bidirectional=True)
+
+    def get_outdim(self):
+        return self.out_dim
 
     def forward(self, x, state_len, pack_input=True):
         '''
@@ -392,8 +400,8 @@ class Attention(nn.Module):
         energy = torch.bmm(self.comp_listener_feature, 
             comp_decoder_state.unsqueeze(2)).squeeze(dim=2)
         energy.masked_fill_(self.state_mask, -float("Inf"))
-        attention_score = [self.softmax(energy)]
-        context = torch.bmm(attention_score[0].unsqueeze(1),
+        attention_score = self.softmax(energy)
+        context = torch.bmm(attention_score.unsqueeze(1),
             listener_feature).squeeze(1)
 
         return attention_score, context

@@ -1,13 +1,10 @@
 '''
 This script preprocesses a speech-text corpora according to
 the specification in the original Listen, Attend & Spell paper.
-
 Given a dataset in some format located under data/[dataset_name],
 a new formatted dataset will be created under data/preprocessed.
-
 For now, this script assumes that the text files are stored in seperate
 TEXT_XTSN files and audio files stored in seperate .wav files.
-
 Will zero-pad the fbansks at the end and sort by original frame length
 '''
 
@@ -291,4 +288,3 @@ if __name__ == '__main__':
     #sort_index('./data/ivona_processed/index.tsv', 's_len', sort_ascending=False)
     #update_slen('./data/ivona_processed/index.tsv')
     sort_index('./data/processed/index.tsv', 'unpadded_num_frames', sort_ascending=False)
-

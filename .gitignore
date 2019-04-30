@@ -2,7 +2,7 @@ env/
 data/
 log/
 result/
-
+runs/
 
 .vscode/
 .mypy_cache/

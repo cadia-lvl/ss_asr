@@ -3,38 +3,39 @@ import torch.nn as nn
 import torch.functional as F
 
 class SpeechAutoEncoder(nn.Module):
-    def __init__(self, ks, num_filters, pool_ks, feature_dim, listener):
+    def __init__(self, ks, num_filters, pool_ks, feature_dim, 
+        listener_out_dim):
         '''
         Input arguments:
         * ks (List): A list of kernel sizes (only 3 values) for
         the 3 convolutional layers
-        * num_filters (List): A list of output filters (only 3 values) for
-        the 3 convolutional layers
+        * num_filters (List): A list of output filters (only 3 values) 
+        for the 3 convolutional layers
         * pool_ks (List): A list of kernel sizes (only 3 values) for
         the max pooling of each convolutional layer
         * feature_dim (int): The dimensionality of the fbanks
-        * listener (nn.Module): A src.asr.Listener instance which is shared
-        with the main ASR
+        * listener_out_dim (int): The output dimensionality of the 
+        listener module
         '''
         super(SpeechAutoEncoder, self).__init__()
 
         self.feature_dim = feature_dim
-        self.listener = listener
 
         self.encoder = SpeechEncoder(ks, num_filters, pool_ks)
         self.decoder = SpeechDecoder(
-            self.encoder.out_dim+self.listener.out_dim, 8*feature_dim)
+            self.encoder.out_dim+listener_out_dim, 8*feature_dim)
 
-    def forward(self, x, x_len):
+    def forward(self, asr, x, x_len):
         '''
         Input arguments:
+        * asr (nn.Module): An instance of the src.ASR class
         * x (tensor): A [batch_size, seq, feature] sized tensor, containing
         a batch of fbanks.
         * x_len (list): The lengths of each sample (unpadded), must be in
         descending order.
         '''
 
-        listener_out, state_len = self.listener(x, x_len)
+        listener_out, state_len = asr.encoder(x, x_len)
 
         # out shape: [batch, 1, 1, self.encoder.out_dim]
         encoder_out = self.encoder(x.unsqueeze(1))

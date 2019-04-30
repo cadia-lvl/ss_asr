@@ -120,14 +120,17 @@ def calc_err(predict, label, mapper):
     
     return sum(ds)/len(ds)
 
-def draw_att(att, hyp_txt):
-    # TODO: THIS IS PROBS BROKEN
+# Only draw first attention head
+def draw_att(att_maps):
+    '''
+    Input arguments:
+    * att_maps (Tensor) of [batch_size, encode_steps, decode_steps] tensor
+    containing attention scores for the entire batch
+    '''
     attmaps = []
-    for att,hyp in zip(att, np.argmax(hyp_txt.cpu().detach(),axis=-1)):
-        # the length without any trailing symbols after EOS token
-        att_len = len(trim_eos(hyp))
-        att = att.detach().cpu()
-        attmaps.append(torch.stack([att,att,att],dim=0)[:,:att_len,:]) # +1 for att. @ <eos>
+    for i in range(att_maps.shape[0]):
+        att_i = att_maps[i, :, :].view(att_maps.shape[1], att_maps.shape[2])
+        attmaps.append(torch.stack([att_i,att_i,att_i],dim=0))
     return attmaps
 
 def trim_eos(sequence):

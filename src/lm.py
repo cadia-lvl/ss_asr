@@ -3,9 +3,6 @@ import torch
 import torch.nn as nn
 import torch.nn.functional as F
 
-from dataset import load_dataset
-
-
 class LM(nn.Module):
     def __init__(self, emb_dim: int, hidden_dim: int, out_dim: int, 
         num_layers: int, dropout_rate: float):
@@ -32,24 +29,9 @@ class LM(nn.Module):
 
         self.out = nn.Linear(hidden_dim, out_dim)
 
-        self.best_perplexity = 1000.0 # lower is better
-        self.global_step = 0
-
-    def set_global_step(self, step:int):
-        self.global_step = step
-    
-    def get_global_step(self):
-        return self.global_step
-    
-    def set_best_ppx(self, ppx:float):
-        self.best_perplexity = ppx
-
-    def get_best_ppx(self):
-        return self.best_perplexity
-
     def forward(self, x, lens, hidden=None):
-        x_emb = self.drop_1(self.emb(x))
         
+        x_emb = self.drop_1(self.emb(x))
         packed = nn.utils.rnn.pack_padded_sequence(x_emb, lens, batch_first=True)
         outputs, hidden = self.lstm(packed, hidden)
         outputs, _ = nn.utils.rnn.pad_packed_sequence(outputs, batch_first=True)
@@ -57,3 +39,9 @@ class LM(nn.Module):
         outputs = self.out(self.drop_2(outputs))
 
         return hidden, outputs
+
+'''
+TODO: Try creating an n-gram LM as well.
+(see: https://github.com/L1aoXingyu/pytorch-beginner/blob/master/06-Natural%20Language%20Process/N-Gram.py)
+
+'''

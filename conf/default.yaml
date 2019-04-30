@@ -12,19 +12,46 @@ asr_model:
   feature_dim: 40                                  # Dimensionality of fbanks (has to be same as used in prepro) (LAS approved)
 
 speech_autoencoder:
+  optimizer:
+    type: 'Adadelta'                                    # Optimizer used for training speech auto encoder (Drexler approved)
+    learning_rate: 1.0                             # Learning rate for opt (Drexler approved)
   kernel_sizes: [[36, 1], [1, 5], [1, 3]]          # A list of kernel sizes for the 3 convolutional layers
   num_filters: [32, 64, 256]                       # A list of output filters for the 3 convolutional layers
   pool_kernel_sizes: [[3, 1], [5, 1], [2000, 40]]  # A list of kernel sizes (only 3 values) for the max pooling of each convolutional layer
-
+    
 text_autoencoder:
+  optimizer:
+    type: 'Adadelta'
+    learning_rate: 1.0
   state_size: 256
   emb_dim: 128
   num_layers: 2
+  drop_rate: 0.1                                   # The probability of a character being dropped in the input
 
+discriminator:
+  G_optimizer:
+    type: 'Adadelta'
+    learning_rate: 1.0
+  D_optimizer:
+    type: 'Adadelta'
+    learning_rate: 1.0  
+  hidden_dim: 256
+  label_smoothing: 0.1
+
+rnn_lm:
+  optimizer: 
+    type: 'Adam'                                   # Optimizer used for training
+    learning_rate: 0.001                           # Learning rate for optimizer
+  model_para:           
+    emb_dim: 650                                   # Word embedding dimensionality
+    hidden_dim: 650                                # Hidden dimensionality of RNN unit
+    num_layers: 2                                  # Number of RNN layers
+    dropout_rate: 0.5                              # Dropout rate used in RNNLM
+  
 solver:
   # Paths to prepro indexes
-  train_index_path: './data/ivona_processed/index.tsv'
-  eval_index_path: './data/ivona_processed/eval_index.tsv'
+  train_index_path: './data/ivona_processed/train.tsv'
+  eval_index_path: './data/ivona_processed/eval.tsv'
   test_index_path: None
   n_jobs: 8                                        # Number of subprocesses used for Dataloader (LAS neutral)
   batch_size: 32                                   # training batch size (LAS approved)
@@ -34,5 +61,4 @@ solver:
   # Path to pretrained LM
   decode_lm_path: 'result/complete_ivona_lm/rnnlm'
   # 
-  decode_lm_weight: 0.5
-
+  decode_lm_weight: 0.5 
