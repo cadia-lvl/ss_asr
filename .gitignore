@@ -3,6 +3,9 @@ data/
 log/
 result/
 runs/
+processed_data/
+
+requirements.txt
 
 .vscode/
 .mypy_cache/
