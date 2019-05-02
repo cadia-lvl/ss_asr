@@ -3,15 +3,15 @@ import torch.nn as nn
 import torch.functional as F
 
 class SpeechAutoEncoder(nn.Module):
-    def __init__(self, ks, num_filters, pool_ks, feature_dim, 
-        listener_out_dim):
+    def __init__(self, listener_out_dim, feature_dim, kernel_sizes, num_filters, 
+        pool_kernel_sizes):
         '''
         Input arguments:
-        * ks (List): A list of kernel sizes (only 3 values) for
+        * kernel_sizes (List): A list of kernel sizes (only 3 values) for
         the 3 convolutional layers
         * num_filters (List): A list of output filters (only 3 values) 
         for the 3 convolutional layers
-        * pool_ks (List): A list of kernel sizes (only 3 values) for
+        * pool_kernel_sizes (List): A list of kernel sizes (only 3 values) for
         the max pooling of each convolutional layer
         * feature_dim (int): The dimensionality of the fbanks
         * listener_out_dim (int): The output dimensionality of the 
@@ -21,7 +21,7 @@ class SpeechAutoEncoder(nn.Module):
 
         self.feature_dim = feature_dim
 
-        self.encoder = SpeechEncoder(ks, num_filters, pool_ks)
+        self.encoder = SpeechEncoder(kernel_sizes, num_filters, pool_kernel_sizes)
         self.decoder = SpeechDecoder(
             self.encoder.out_dim+listener_out_dim, 8*feature_dim)
 

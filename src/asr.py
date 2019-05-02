@@ -12,52 +12,40 @@ import math
 from postprocess import Hypothesis
 
 class ASR(nn.Module):
-    def __init__(self, output_dim, model_para):
+    def __init__(self, output_dim: int, encoder_state_size: int, 
+        decoder_state_size: int, mlp_out_size: int, feature_dim: int, 
+        tf_rate: float):
+        
+        '''
+        Input arguments:
+        * output_dim (int): The output dimensionality of character predictions
+        * encoder_state_size (int): The state size of the encoder LSTMs
+        * decoder_state_size (int): The state size of the decoder LSTMs
+        * mlp_out_size (int): The output dimensionality of the linear networks
+        used in the attention module
+        * feature_dim (int): The feature dimensionality of inputs
+        * tf_rate (float): The teacher forcing rate in range (0, 1). Higher means
+        more teacher forcing.
+        '''
         super(ASR, self).__init__()
         
-        self.encoder_state_size = model_para['encoder']['state_size']
-        self.decoder_state_size = model_para['decoder']['state_size']
-        self.enc_out_dim = model_para['encoder']['state_size'] * 2
+        enc_out_dim = encoder_state_size * 2
 
-        self.encoder = Listener(
-            self.encoder_state_size, model_para['feature_dim'])
+        self.encoder = Listener(encoder_state_size, feature_dim)
 
-        self.attention = Attention(model_para['attention']['mlp_out_size'],
-            self.enc_out_dim, self.decoder_state_size)
+        self.attention = Attention(mlp_out_size, enc_out_dim, 
+            decoder_state_size)
 
-        self.decoder = Speller(self.decoder_state_size, self.enc_out_dim)
+        self.decoder = Speller(decoder_state_size, enc_out_dim)
 
-        self.embed = nn.Embedding(output_dim, self.decoder_state_size)
-        self.char_dim = output_dim
-        self.char_trans = nn.Linear(self.decoder_state_size,self.char_dim)
+        self.embed = nn.Embedding(output_dim, decoder_state_size)
+        char_dim = output_dim
+        self.char_trans = nn.Linear(decoder_state_size, char_dim)
 
-        self.tf_rate = model_para['tf_rate']
+        self.tf_rate = tf_rate
 
         self.init_parameters()
-
-    def get_attention(self):
-        return self.attention
     
-    def get_listener(self):
-        return self.encoder
-
-    def get_speller(self):
-        return self.decoder
-
-    def get_char_emb(self):
-        return self.embed
-    
-    def get_char_trans(self):
-        return self.char_trans
-
-    def load_lm(self,decode_lm_weight,decode_lm_path,**kwargs):
-        # Load RNNLM (for inference only)
-        self.rnn_lm = torch.load(decode_lm_path)
-        self.rnn_lm.eval()
-    
-    def clear_att(self):
-        self.attention.reset_enc_mem()
-
     def forward(self, audio_feature, decode_step, teacher=None, 
         state_len=None):
         '''
@@ -157,14 +145,14 @@ class ASR(nn.Module):
         set_forget_bias_to_one(self.decoder.layer_1.bias_ih)
         set_forget_bias_to_one(self.decoder.layer_2.bias_ih)
 
-    def beam_decode(self, audio_feature, decode_step, state_len, decode_beam_size):
+    def beam_decode(self, audio_feature, decode_step, state_len, decode_beam_size, rnn_lm=None,
+        decode_lm_weight=0):
         '''
         Beam decode returns top N hyps for each input sequence
         This is only ever used during inference, not training!
         '''
         assert audio_feature.shape[0] == 1
         assert self.training == False
-        self.decode_beam_size = decode_beam_size
         
         # Encode
         encode_feature, encode_len = self.encoder(audio_feature,state_len)
@@ -200,31 +188,32 @@ class ASR(nn.Module):
                 cur_char = F.log_softmax(self.char_trans(dec_out), dim=-1)
 
                 # Joint RNN-LM decoding
-                last_char_idx = prev_output.last_char_idx.to(cur_device)
-                lm_hidden, lm_output = self.rnn_lm(last_char_idx, [1], prev_output.lm_state)
-                cur_char += self.decode_lm_weight * F.log_softmax(lm_output.squeeze(1), dim=-1)
+                if rnn_lm is not None:
+                    last_char_idx = prev_output.last_char_idx.to(cur_device)
+                    lm_hidden, lm_output = rnn_lm(last_char_idx, [1], prev_output.lm_state)
+                    cur_char += decode_lm_weight * F.log_softmax(lm_output.squeeze(1), dim=-1)
 
                 # Beam search
-                top_vals, top_idx = cur_char.topk(self.decode_beam_size)
+                top_vals, top_idx = cur_char.topk(decode_beam_size)
                 final, top = prev_output.add_topk(top_idx, top_vals, 
                     self.decoder.hidden_state, lm_state=lm_hidden)
                 
                 # Move complete hyps. out
                 if final is not None:
                     final_outputs.append(final)
-                    if self.decode_beam_size == 1:
+                    if decode_beam_size == 1:
                         return final_outputs
                 next_top_outputs.extend(top)
             
             # Sort for top N beams
             next_top_outputs.sort(key=lambda o: o.avg_score(), reverse=True)
-            prev_top_outputs = next_top_outputs[:self.decode_beam_size]
+            prev_top_outputs = next_top_outputs[:decode_beam_size]
             next_top_outputs = []
             
             final_outputs += prev_top_outputs
             final_outputs.sort(key=lambda o: o.avg_score(), reverse=True)
         
-        return final_outputs[:self.decode_beam_size]
+        return final_outputs[:decode_beam_size]
 
 
 class Listener(nn.Module):
@@ -317,11 +306,11 @@ class Speller(nn.Module):
 
     @property
     def hidden_state(self):
-        return [s.clone().detach().cpu() for s in self.state_list],
-        [c.clone().detach().cpu() for c in self.cell_list]
+        return [s.clone().detach().cpu() for s in self.state_list], \
+            [c.clone().detach().cpu() for c in self.cell_list]
 
     @hidden_state.setter
-    def hidden_state(self, state): # state is a tuple of two list
+    def hidden_state(self, state): # state is a tuple of two 
         device = self.state_list[0].device
         self.state_list = [s.to(device) for s in state[0]]
         self.cell_list = [c.to(device) for c in state[1]]

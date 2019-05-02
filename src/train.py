@@ -10,14 +10,14 @@ import torch
 import yaml
 
 from solver import (AdvTrainer, ASRTrainer, LMTrainer, SAETrainer,
-                    TAETrainer)
+                    TAETrainer, ASRTester)
 
 torch.backends.cudnn.deterministic = True
 
 # Arguments
 parser = argparse.ArgumentParser(description='Training E2E asr.')
 parser.add_argument('--type', type=str, 
-    help='asr | rnn_lm | tae | sae | adv',
+    help='asr | rnn_lm | tae | sae | adv | test',
     default='asr')
 parser.add_argument('--name', type=str, help='Name for logging.', 
     default='newtest')
@@ -36,7 +36,7 @@ parser.add_argument('--verbose', default=True,
 paras = parser.parse_args()
 
 type_map = {'asr': ASRTrainer, 'rnn_lm': LMTrainer, 'tae': TAETrainer, 
-    'sae': SAETrainer, 'adv': AdvTrainer }
+    'sae': SAETrainer, 'adv': AdvTrainer, 'test': ASRTester }
 
 config = yaml.load(open(paras.config,'r'), Loader=yaml.FullLoader)
 

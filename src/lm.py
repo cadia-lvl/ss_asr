@@ -4,7 +4,7 @@ import torch.nn as nn
 import torch.nn.functional as F
 
 class LM(nn.Module):
-    def __init__(self, emb_dim: int, hidden_dim: int, out_dim: int, 
+    def __init__(self, out_dim: int, emb_dim: int, hidden_dim: int, 
         num_layers: int, dropout_rate: float):
         '''
         Input arguments:

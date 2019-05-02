@@ -43,7 +43,6 @@ class Solver:
         # Training details
         self.max_step = config['solver']['total_steps']
 
-
         if torch.cuda.is_available(): 
             self.device = torch.device('cuda') 
             self.paras.gpu = True
@@ -68,11 +67,19 @@ class Solver:
 
         self.step, self.best_val_loss = self.get_globals()
 
+        self.verbose('Model {} loaded at step {} with best metric {:.3f}'
+            .format(self.module_id, self.step, self.best_val_loss))
+
     def verbose(self, msg, progress=False):
         ''' Verbose function for print information to stdout'''
         end = '\r' if progress else '\n'
+        if progress:
+            msg += '                              ' 
+        else:
+            msg = '[INFO]' + msg
+
         if self.paras.verbose:
-            print('[INFO]',msg, end=end)
+            print(msg, end=end)
 
     def log_scalar(self, key, val):
         self.log.add_scalar('{}_{}'.format(self.module_id, key), val, self.step)
@@ -87,12 +94,15 @@ class Solver:
         '''
         Returns (step, loss) where loss is the best loss
         that has been achived by the associated model and
-        the global step when it was achieved. If the model
-        is trained from scratch, we return (0, 10_000)
+        the global step when it was achieved. 
+        
+        If no info is available in the tracker file and a checkpoint file is not
+        found then we return (0, 10_000)
         '''
+  
         if os.path.isfile(self.tracker_path):
             data = json.load(open(self.tracker_path, 'r'))
-            if self.module_id in data:
+            if self.module_id in data and os.path.isfile(self.ckppath):
                 return data[self.module_id]['step'], data[self.module_id]['loss']
         return 0, 10_000
 
@@ -103,7 +113,7 @@ class Solver:
             data = json.load(open(self.tracker_path, 'r'))
         data[self.module_id] = {}
         data[self.module_id]['step'] = step
-        # actually is error in case of LAS, not loss
+        # actually is error in case of LAS and perplexity for LM, not loss
         data[self.module_id]['loss'] = loss
 
         json.dump(data, open(self.tracker_path, 'w'))
@@ -115,6 +125,26 @@ class Solver:
         else:
             optim.step()
 
+    def setup_module(self, module, ckp_path, *para, **model_para):
+        '''
+        Given a model module type and parameters, the model will be created
+        and if a pre-trained model exists, it will be loaded.
+
+        Input arguments:
+        * module (nn.Module): A module type
+        * ckp_path (str): A path to where the checkpoint for the module would
+        be stored
+        * para: Any number of positional arguments passed to the module
+        * model_para: Any number of keyword arguments passed to the module 
+        '''
+
+        model = module(*para, **model_para)
+
+        if os.path.isfile(ckp_path):
+            self.verbose('Loading a pretrained model from {}'.format(ckp_path))
+            model.load_state_dict(torch.load(ckp_path))
+
+        return model.to(self.device)
 
 class ASRTrainer(Solver):
     ''' Handler for complete training progress'''
@@ -134,25 +164,20 @@ class ASRTrainer(Solver):
             batch_size=self.config['solver']['eval_batch_size'],            
             use_gpu=self.paras.gpu)
         
-    def set_model(self):
+    def set_model(self, asr=None):
         ''' Setup ASR'''        
         self.seq_loss = nn.CrossEntropyLoss(ignore_index=0, 
             reduction='none').to(self.device)
         
         # Build attention end-to-end ASR
-        self.asr_model = ASR(self.mapper.get_dim(),
-            self.config['asr_model']).to(self.device)
-
-        # check if a checkpoint has been written for this module
-        if os.path.isfile(self.ckppath):
-            # then we load a pretrained model
-            self.asr_model.load_state_dict(torch.load(self.ckppath))
-
-        if self.step > 0:
-            self.verbose("Starting training at global step {} with best loss of {}"
-                 .format(self.step, self.best_val_loss))
+        if asr is None:
+            self.asr_model = self.setup_module(ASR, self.ckppath, self.mapper.get_dim(),
+                **self.config['asr_model']['model_para'])
+        else:
+            # a pretrained model has been passed to the solver.
+            self.asr_model = asr
         
-        # setup optimizer            
+        # setup optimizer
         self.optim = getattr(torch.optim,
             self.config['asr_model']['optimizer']['type'])
         self.optim = self.optim(self.asr_model.parameters(), 
@@ -295,7 +320,7 @@ class ASRTrainer(Solver):
         # Save model by val er.
         if err/val_len  < self.best_val_loss:
             self.best_val_loss = err/val_len
-            self.verbose('Best validation error : {:.4f} @ global step {}'
+            self.verbose('Best validation loss for ASR : {:.4f} @ global step {}'
                 .format(self.best_val_loss, self.step))
 
             self.set_globals(self.step, self.best_val_loss)
@@ -308,6 +333,96 @@ class ASRTrainer(Solver):
                     f.write(t1[0]+','+t2[0]+'\n')
 
         self.asr_model.train()
+    
+class ASRTester(Solver):
+    ''' Handler for complete inference progress'''
+    def __init__(self, config, paras):
+        super(ASRTester, self).__init__(config, paras, 'asr_test')
+        
+        self.decode_file = "_".join(
+            ['decode','beam',str(self.config['solver']['decode_beam_size']),
+            'len',str(self.config['solver']['max_decode_step_ratio'])])
+
+    def load_data(self):
+        (self.mapper, _ ,self.test_set) = load_dataset(
+            self.config['solver']['test_index_path_byxlen'],
+            batch_size=self.config['solver']['test_batch_size'],
+            use_gpu=self.paras.gpu)
+        
+        (_, _, self.eval_set) = load_dataset(
+            self.config['solver']['eval_index_path_byxlen'], 
+            batch_size=self.config['solver']['eval_batch_size'],            
+            use_gpu=self.paras.gpu)
+
+    def set_model(self):
+        ''' Load saved ASR'''
+        self.asr_model = self.setup_module(ASR, self.ckppath, self.mapper.get_dim(),
+            **self.config['asr_model']['model_para'])
+        # move origin model to cpu, clone it to GPU for each thread
+        self.asr_model.eval()
+        self.asr_model = self.asr_model.to('cpu')
+
+        self.rnnlm = self.setup_module(LM, self.ckppath, self.mapper.get_dim(), 
+            **self.config['rnn_lm']['model_para'])
+
+        self.lm_weight = self.config['solver']['decode_lm_weight']
+        self.decode_beam_size = self.config['solver']['decode_beam_size']
+        self.njobs = self.config['solver']['decode_jobs']
+        self.decode_step_ratio = self.config['solver']['max_decode_step_ratio']
+
+
+        self.decode_file += '_lm{:}'.format(self.config['solver']['decode_lm_weight'])
+        
+
+    def exec(self):
+        '''Perform inference step with beam search decoding.'''
+        self.verbose('Start decoding with beam search, beam size: {}'
+            .format(self.decode_beam_size))
+        self.verbose('Number of utts to decode : {}, decoding with {} threads.'
+            .format(len(self.test_set),self.njobs))
+        
+        _ = Parallel(n_jobs=self.njobs)(
+            delayed(self.beam_decode)(x[0],y[0].tolist()[0]) 
+            for x, y in tqdm(self.test_set))
+        
+        self.verbose('Decode done, best results at {}.'.format(
+            str(os.path.join(self.ckpdir,self.decode_file+'.txt'))))
+        
+        self.verbose('Top {} results at {}.'.format(
+            self.decode_beam_size, str(os.path.join(self.ckpdir,self.decode_file+'_nbest.txt'))))
+        
+    def write_hyp(self, hyps, y):
+        '''Record decoding results'''
+        gt = self.mapper.translate(y,return_string=True)
+        # Best
+        with open(os.path.join(self.ckpdir,self.decode_file+'.txt'),'a') as f:
+            best_hyp = self.mapper.translate(hyps[0].outIndex, return_string=True)
+            f.write(gt+'\t'+best_hyp+'\n')
+        # N best
+        with open(os.path.join(self.ckpdir,self.decode_file+'_nbest.txt'),'a') as f:
+            for hyp in hyps:
+                best_hyp = self.mapper.translate(hyp.outIndex, return_string=True)
+                f.write(gt+'\t'+best_hyp+'\n')   
+
+    def beam_decode(self, x, y):
+        '''Perform beam decoding with end-to-end ASR'''
+        # Prepare data
+        x = x.to(device = self.device,dtype=torch.float32)
+        state_len = torch.sum(torch.sum(x.cpu(),dim=-1)!=0,dim=-1)
+        state_len = [int(sl) for sl in state_len]
+
+        # Forward
+        with torch.no_grad():
+            max_decode_step =  int(np.ceil(state_len[0]*self.decode_step_ratio))
+            model = copy.deepcopy(self.asr_model).to(self.device)
+            hyps = model.beam_decode(x, max_decode_step, 
+                state_len, self.decode_beam_size, self.rnnlm, self.lm_weight)
+        del model
+        
+        self.write_hyp(hyps,y)
+        del hyps
+        
+        return 1
 
 class SAETrainer(Solver):
     '''
@@ -333,24 +448,13 @@ class SAETrainer(Solver):
             use_gpu=self.paras.gpu)
     
     def set_model(self):
-        self.asr_model = ASR(self.mapper.get_dim(),
-            self.config['asr_model']).to(self.device)            
 
-        p = self.config['speech_autoencoder']
-        self.speech_autoenc = SpeechAutoEncoder(p['kernel_sizes'],
-            p['num_filters'], p['pool_kernel_sizes'], 
-            self.config['asr_model']['feature_dim'], 
-            self.asr_model.get_listener().out_dim).to(self.device)
+        self.asr_model = self.setup_module(ASR, os.path.join(self.ckpdir, 'asr.cpt'), 
+            self.mapper.get_dim(), **self.config['asr_model']['model_para'])
 
-        if os.path.isfile(self.ckppath):
-            # a pretrained text autoencoder exists
-            self.verbose("Loading a pretrained Text Autoencoder")
-            self.speech_autoenc.load_state_dict(torch.load(self.ckppath))
-
-        if os.path.isfile(os.path.join(self.ckpdir, 'asr.cpt')):
-            self.verbose("Loading a pretrained LAS model")
-            self.asr_model.load_state_dict(
-                torch.load(os.path.join(self.ckpdir, 'asr.cpt')))
+        self.speech_autoenc = self.setup_module(SpeechAutoEncoder, self.ckppath, 
+            self.asr_model.encoder.out_dim, self.config['asr_model']['model_para']['feature_dim'],
+            **self.config['speech_autoencoder']['model_para'])
 
         # set loss metrics and optimizer
 
@@ -358,14 +462,14 @@ class SAETrainer(Solver):
         The optimizer will optimize:
         * The whole SpeechAutoencoder
         * The listener of the ASR model
-        '''        
-        self.optim = getattr(torch.optim, p['optimizer']['type'])
+        '''
+        self.optim = getattr(torch.optim, self.config['speech_autoencoder']['optimizer']['type'])
         self.optim = self.optim(
             list(self.speech_autoenc.parameters()) + \
             list(self.asr_model.encoder.parameters()), 
-            lr=p['optimizer']['learning_rate'], eps=1e-8)
+            lr=self.config['speech_autoencoder']['optimizer']['learning_rate'], eps=1e-8)
 
-        self.loss_metric = nn.SmoothL1Loss(reduction='none')
+        self.loss_metric = nn.SmoothL1Loss(reduction='none').to(self.device)
 
     def exec(self):
         self.verbose('Training set total '+str(len(self.train_set))+' batches.')
@@ -447,9 +551,10 @@ class SAETrainer(Solver):
 
             torch.save(self.speech_autoenc.state_dict(), self.ckppath)
 
-            # I should probably evaluate the ASR model as well, but we should
-            # be save saving it as well.
-            torch.save(self.asr_model.state_dict(), os.path.join(self.ckpdir, 'asr.cpt'))
+            asr_trainer = ASRTrainer(self.config, self.paras)
+            asr_trainer.set_model(self.asr_model)
+            asr_trainer.load_data()
+            asr_trainer.valid()
 
         self.speech_autoenc.train()
         self.asr_model.train() 
@@ -480,24 +585,11 @@ class TAETrainer(Solver):
             drop_rate=self.config['text_autoencoder']['drop_rate'])
 
     def set_model(self):
-        self.asr_model = ASR(self.mapper.get_dim(),
-            self.config['asr_model']).to(self.device)            
+        self.asr_model = self.setup_module(ASR, os.path.join(self.ckpdir, 'asr.cpt'), 
+            self.mapper.get_dim(), **self.config['asr_model']['model_para'])
 
-        p = self.config['text_autoencoder']
-
-        self.text_autoenc = TextAutoEncoder(self.mapper.get_dim(), 
-            emb_dim = p['emb_dim'], state_size=p['state_size'],
-            num_layers=p['num_layers']).to(self.device)
-        
-        if os.path.isfile(self.ckppath):
-            # a pretrained text autoencoder exists
-            self.verbose("Loading a pretrained Text Autoencoder")
-            self.text_autoenc.load_state_dict(torch.load(self.ckppath))
-
-        if os.path.isfile(os.path.join(self.ckpdir, 'asr.cpt')):
-            self.verbose("Loading a pretrained LAS model")
-            self.asr_model.load_state_dict(
-                torch.load(os.path.join(self.ckpdir, 'asr.cpt')))
+        self.text_autoenc = self.setup_module(TextAutoEncoder, self.ckppath,
+            self.mapper.get_dim(), **self.config['text_autoencoder']['model_para'])        
 
         '''
         The optimizer will optimize:
@@ -508,14 +600,14 @@ class TAETrainer(Solver):
         * The ASR char_trans linear layer
         '''
 
-        self.optim = getattr(torch.optim, p['optimizer']['type'])
+        self.optim = getattr(torch.optim, self.config['text_autoencoder']['optimizer']['type'])
         self.optim = self.optim( 
                 list(self.text_autoenc.parameters()) + \
                 list(self.asr_model.embed.parameters()) + \
                 list(self.asr_model.attention.parameters()) + \
                 list(self.asr_model.decoder.parameters()) + \
                 list(self.asr_model.char_trans.parameters()),
-                lr=p['optimizer']['learning_rate'], eps=1e-8)
+                lr=self.config['text_autoencoder']['optimizer']['learning_rate'], eps=1e-8)
 
         self.loss_metric = torch.nn.CrossEntropyLoss(ignore_index=0, 
             reduction='none').to(self.device)
@@ -609,9 +701,10 @@ class TAETrainer(Solver):
 
             torch.save(self.text_autoenc.state_dict(), self.ckppath)
 
-            # I should probably evaluate the ASR model as well, but we should
-            # be save saving it as well.
-            torch.save(self.asr_model.state_dict(), os.path.join(self.ckpdir, 'asr.cpt'))
+            asr_trainer = ASRTrainer(self.config, self.paras)
+            asr_trainer.set_model(self.asr_model)
+            asr_trainer.load_data()
+            asr_trainer.valid()
 
         self.text_autoenc.train()
         self.asr_model.train() 
@@ -637,45 +730,24 @@ class AdvTrainer(Solver):
             use_gpu=self.paras.gpu)
         
     def set_model(self):
+        self.asr_model = self.setup_module(ASR, os.path.join(self.ckpdir, 'asr.cpt'), 
+            self.mapper.get_dim(), **self.config['asr_model']['model_para'])
 
-        p = self.config['text_autoencoder']
-        d = self.config['discriminator']
+        self.text_autoenc = self.setup_module(TextAutoEncoder, os.path.join(self.ckpdir, 'tae.cpt'),
+            self.mapper.get_dim(), **self.config['text_autoencoder']['model_para'])        
 
-        self.asr_model = ASR(self.mapper.get_dim(),
-            self.config['asr_model']).to(self.device)            
-
-        self.text_autoenc = TextAutoEncoder(self.mapper.get_dim(), 
-            emb_dim = p['emb_dim'], state_size=p['state_size'],
-            num_layers=p['num_layers']).to(self.device)
-
-        self.discriminator = Discriminator(self.asr_model.encoder.get_outdim(), 
-            d['hidden_dim']).to(self.device)
-
-        # load models if they exist
-        if os.path.isfile(self.ckppath):
-            # a pretrained text autoencoder exists
-            self.verbose("Loading a pretrained Discriminator")
-            self.discriminator.load_state_dict(torch.load(self.ckppath))
-
-        if os.path.isfile(os.path.join(self.ckpdir, 'asr.cpt')):
-            self.verbose("Loading a pretrained LAS model")
-            self.asr_model.load_state_dict(
-                torch.load(os.path.join(self.ckpdir, 'asr.cpt')))
-
-        if os.path.isfile(os.path.join(self.ckpdir, 'tae.cpt')):
-            self.verbose("Loading a pretrained SAE model")
-            self.text_autoenc.load_state_dict(
-                torch.load(os.path.join(self.ckpdir, 'tae.cpt')))
-
+        self.discriminator = self.setup_module(Discriminator, self.ckppath,
+            self.asr_model.encoder.get_outdim(), **self.config['discriminator']['model_para'])
+        
         self.data_distribution = self.text_autoenc.encoder
         
-        self.G_optim = getattr(torch.optim, d['G_optimizer']['type'])
+        self.G_optim = getattr(torch.optim, self.config['discriminator']['G_optimizer']['type'])
         self.G_optim = self.G_optim(self.asr_model.encoder.parameters(), 
-            lr=d['G_optimizer']['learning_rate'], eps=1e-8)
+            lr=self.config['discriminator']['G_optimizer']['learning_rate'], eps=1e-8)
 
-        self.D_optim = getattr(torch.optim, d['D_optimizer']['type'])
+        self.D_optim = getattr(torch.optim, self.config['discriminator']['D_optimizer']['type'])
         self.D_optim = self.D_optim(self.discriminator.parameters(), 
-            lr=d['D_optimizer']['learning_rate'], eps=1e-8)
+            lr=self.config['discriminator']['D_optimizer']['learning_rate'], eps=1e-8)
 
         self.loss_metric = torch.nn.BCELoss().to(self.device)
 
@@ -819,9 +891,13 @@ class AdvTrainer(Solver):
 
             torch.save(self.discriminator.state_dict(), self.ckppath)
 
-            # I should probably evaluate the ASR model as well, but we should
-            # be save saving it as well.
-            #torch.save(self.asr_model.state_dict(), os.path.join(self.ckpdir, 'asr.cpt'))
+            '''
+            Very experimental !!!
+            '''
+            asr_trainer = ASRTrainer(self.config, self.paras)
+            asr_trainer.set_model(self.asr_model)
+            asr_trainer.load_data()
+            asr_trainer.valid()
 
         self.discriminator.train()
 
@@ -846,20 +922,14 @@ class LMTrainer(Solver):
         ''' Setup RNNLM'''
         self.verbose('Init RNNLM model.')
 
-        self.rnnlm = LM(out_dim=self.mapper.get_dim(), 
+        self.rnnlm = self.setup_module(LM, self.ckppath, self.mapper.get_dim(), 
             **self.config['rnn_lm']['model_para'])
-
-        if os.path.isfile(self.ckppath):
-            # then we load a pretrained model
-            self.rnnlm.load_state_dict(torch.load(self.ckppath))
-
-        self.rnnlm = self.rnnlm.to(self.device)
 
         # optimizer
         self.optim = getattr(torch.optim,
             self.config['rnn_lm']['optimizer']['type'])
         self.optim = self.optim(self.rnnlm.parameters(), 
-            lr=self.config['rnn_lm']['optimizer']['learning_rate'],eps=1e-8)
+            lr=self.config['rnn_lm']['optimizer']['learning_rate'], eps=1e-8)
 
     def exec(self):
         ''' Training RNN-LM'''

@@ -43,7 +43,7 @@ class Hypothesis:
         '''
         new_hyps = []
         term_score = None
-        beam_size = len(topi[0])
+        beam_size = len(top_idx[0])
         
         for i in range(beam_size):
             # Detect <eos>
