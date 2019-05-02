@@ -149,12 +149,8 @@ def iterate_malromur_index(index_path: str, wav_dir: str, processed_dir: str):
     '''
     executor = ProcessPoolExecutor(max_workers=N_JOBS)
     futures = []
-    i = 0
     with open(index_path, 'r') as file:
         for line in file:
-            i+=1
-            if i == 100:
-                break
             line_data = line.rstrip().split(',')
             if line_data[7] == 'correct':
                 wav_name = line_data[0] # without extension
@@ -162,8 +158,6 @@ def iterate_malromur_index(index_path: str, wav_dir: str, processed_dir: str):
                 wav_path = os.path.join(wav_dir, wav_name+'.wav')
                 futures.append(executor.submit(partial(process_malromur_pair,
                     text, wav_path, processed_dir)))
-            else:
-                print(line_data[7])
 
     return [future.result() for future in tqdm(futures) if future.result() is not None]
 
