@@ -25,6 +25,7 @@ from tqdm import tqdm
 
 from librosa.core import load, power_to_db
 from librosa.feature import melspectrogram
+import librosa
 
 
 
@@ -103,6 +104,61 @@ def iterate_by_ids(txt_dir: str, wav_dir: str,  processed_dir: str):
 
     return [future.result() for future in tqdm(futures) if future.result() is not None]
 
+
+def iterate_malromur_index(index_path: str, wav_dir: str, processed_dir: str):
+    '''
+    The malromur index has the following columns in a comma seperated format
+    1) Name of the recording (filename excluding ".wav")
+    2) Environment
+    3) Some number
+    4) Gender of speaker
+    5) Age of speaker
+    6) Text read
+    7) Duration of file in seconds
+    8) Classification of recording
+
+    We need to take the name of recording, add '.wav' to it
+    and the text read.
+    '''
+    executor = ProcessPoolExecutor(max_workers=N_JOBS)
+    futures = []
+    i = 0
+    with open(index_path, 'r') as file:
+        while i < 100:
+            i += 1
+            for line in file:
+                line_data = line.split(',')
+                if line_data[7] == 'correct':
+                    wav_name = line_data[0] # without extension
+                    text = line_data[0]
+                    wav_path = os.path.join(wav_dir, wav_name+'.wav')
+                    futures.append(executor.submit(partial(process_pair,
+                        text, wav_path, processed_dir)))
+
+    return [future.result() for future in tqdm(futures) if future.result() is not None]
+
+def process_malromur_pair(text: str, wav_path: str, processed_dir: str):
+    # process text
+    clean_text, s_len = normalize_string(text)
+
+    # process audio
+    try:
+        sample_rate, y = load_wav(wav_path)
+    except:
+        print("Error reading wav: {}. Sample is ommitted.".format(wav_path))
+        return None
+    fbank = log_fbank(y, sample_rate)
+
+    num_frames = fbank.shape[0]
+
+    # save filterbank under <processed_dir>/fbanks/file_id.npy
+    fbank_path = os.path.join(processed_dir, 'fbanks', 
+        os.path.splitext(os.path.basename(wav_path))[0])
+    np.save(fbank_path, fbank)
+    
+    # we return 'na' as text_path to comply with other stuff
+    return (clean_text, fbank_path+'.npy', s_len, num_frames, 'na', wav_path)
+
 def process_pair(text_path: str, wav_path: str, processed_dir: str):
     # process text
     raw_text = text_from_file(text_path)
@@ -154,6 +210,10 @@ def load_wav(file_path: str) -> Tuple[int, np.ndarray]:
     the sample rate and signal
     '''
     y, sample_rate = load(file_path)
+
+    librosa.display.spechsow(y)
+    plt.show()
+
     return sample_rate, y
 
 def text_from_file(file_path: str) -> str:
@@ -287,4 +347,4 @@ if __name__ == '__main__':
     #clean_index_text('./data/ivona_processed/index.tsv')
     #sort_index('./data/ivona_processed/index.tsv', 's_len', sort_ascending=False)
     #update_slen('./data/ivona_processed/index.tsv')
-    sort_index('./data/processed/index.tsv', 'unpadded_num_frames', sort_ascending=False)
+    #sort_index('./data/processed/index.tsv', 'unpadded_num_frames', sort_ascending=False)
