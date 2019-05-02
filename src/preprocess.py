@@ -84,6 +84,33 @@ def preprocess(txt_dir: str, wav_dir: str, processed_dir: str=None):
     print('Finished zero-padding.')
 
 
+def preprocess_malromur(index: str, wav_dir: str, processed_dir: str=None):
+    if processed_dir is None:
+        processed_dir = os.path.join('data', 'processed')
+    fbank_dir = os.path.join(processed_dir, 'fbanks')
+    os.makedirs(processed_dir, exist_ok=True)
+    os.makedirs(fbank_dir, exist_ok=True)
+
+    lines = iterate_malromur_index(index, wav_dir, processed_dir)
+    print('Sorting by frame length...')
+    lines = sorted(lines, key=lambda x: x[3])
+    max_len = lines[-1][3]
+    print('Iterating files ...')
+    with open(os.path.join(processed_dir, 'index.tsv'), 'w', encoding='utf-8') as f:
+        for line in lines:
+            '''
+            Layout of index
+            normalized_text, path_to_fbank, s_len, unpadded_num_frames, text_fname, wav_fname
+            '''
+            f.write('\t'.join([str(attr) for attr in line]) + '\n')
+            
+    print('Featurebanks have been computed, now zero-padding (max_len={})...'.format(max_len))
+    for line in lines:
+        fbank_path = line[1]
+        fbank = np.load(fbank_path)
+        np.save(fbank_path, zero_pad(fbank, max_len))
+    print('Finished zero-padding.')
+
 def iterate_by_ids(txt_dir: str, wav_dir: str,  processed_dir: str):
     '''
     Iterates files in either the txt_dir or wav_dir 
@@ -348,3 +375,5 @@ if __name__ == '__main__':
     #sort_index('./data/ivona_processed/index.tsv', 's_len', sort_ascending=False)
     #update_slen('./data/ivona_processed/index.tsv')
     #sort_index('./data/processed/index.tsv', 'unpadded_num_frames', sort_ascending=False)
+
+    preprocess_malromur('/data/malromur2017/index.txt', '/data/malromur2017/correct', './processed_data/malromur2017')
