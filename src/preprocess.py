@@ -241,9 +241,6 @@ def load_wav(file_path: str) -> Tuple[int, np.ndarray]:
     '''
     y, sample_rate = load(file_path)
 
-    librosa.display.spechsow(y)
-    plt.show()
-
     return sample_rate, y
 
 def text_from_file(file_path: str) -> str:
