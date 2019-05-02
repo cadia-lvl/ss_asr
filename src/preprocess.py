@@ -159,7 +159,7 @@ def iterate_malromur_index(index_path: str, wav_dir: str, processed_dir: str):
                     wav_name = line_data[0] # without extension
                     text = line_data[0]
                     wav_path = os.path.join(wav_dir, wav_name+'.wav')
-                    futures.append(executor.submit(partial(process_pair,
+                    futures.append(executor.submit(partial(process_malromur_pair,
                         text, wav_path, processed_dir)))
 
     return [future.result() for future in tqdm(futures) if future.result() is not None]
@@ -376,4 +376,4 @@ if __name__ == '__main__':
     #update_slen('./data/ivona_processed/index.tsv')
     #sort_index('./data/processed/index.tsv', 'unpadded_num_frames', sort_ascending=False)
 
-    preprocess_malromur('/data/malromur2017/index.txt', '/data/malromur2017/correct', './processed_data/malromur2017')
+    preprocess_malromur('/data/malromur2017/info.txt', '/data/malromur2017/correct', './processed_data/malromur2017')
