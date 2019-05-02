@@ -5,6 +5,8 @@ result/
 runs/
 processed_data/
 
+*.out
+
 requirements.txt
 
 .vscode/
