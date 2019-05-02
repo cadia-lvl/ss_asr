@@ -155,7 +155,7 @@ def iterate_malromur_index(index_path: str, wav_dir: str, processed_dir: str):
             i+=1
             if i == 100:
                 break
-            line_data = line.split(',')
+            line_data = line.rstrip().split(',')
             if line_data[7] == 'correct':
                 wav_name = line_data[0] # without extension
                 text = line_data[0]
