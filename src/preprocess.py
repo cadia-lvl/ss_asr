@@ -327,12 +327,12 @@ def clean_index_text(index:str):
     frame = pd.read_csv(index, names=['normalized_text', 'path_to_fbank', 
         's_len', 'unpadded_num_frames', 'text_fname', 'wav_fname'], sep='\t')    
     frame['normalized_text'] = frame.apply(lambda row: cit_helper(row), axis=1) 
-    frame.to_csv(index, sep='\t', index=False)    
+    frame.to_csv(index, sep='\t', index=False, header=False)    
 
 def cit_helper(row):
     return normalize_string(text_from_file(row['text_fname']))[0]
 
-def sort_index(index:str, sort_key:str, sort_ascending:bool=True):
+def sort_index(index:str, sort_key:str, sort_ascending:bool=True, out_index:str=None):
     '''
     Input arguments:
     index (str): Path to an index file
@@ -346,7 +346,8 @@ def sort_index(index:str, sort_key:str, sort_ascending:bool=True):
     from dataset import load_df
     frame = load_df(index)
     frame = frame.sort_values(by=[sort_key], ascending=sort_ascending)
-    frame.to_csv(index, sep='\t', index=False)
+    if out_index is not None: index = out_index
+    frame.to_csv(index, sep='\t', index=False, header=False)
 
 def update_slen(index:str):
     '''
@@ -368,6 +369,6 @@ if __name__ == '__main__':
     #clean_index_text('./data/ivona_processed/index.tsv')
     #sort_index('./data/ivona_processed/index.tsv', 's_len', sort_ascending=False)
     #update_slen('./data/ivona_processed/index.tsv')
-    #sort_index('./data/processed/index.tsv', 'unpadded_num_frames', sort_ascending=False)
-
-    preprocess_malromur('/data/malromur2017/info.txt', '/data/malromur2017/correct', './processed_data/malromur2017')
+    sort_index('./data/processed/index.tsv', 's_len', sort_ascending=False, 
+        out_index='./data/processed/index_test.tsv')
+    #preprocess_malromur('/data/malromur2017/info.txt', '/data/malromur2017/correct', './processed_data/malromur2017')
