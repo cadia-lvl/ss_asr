@@ -57,17 +57,22 @@ def simple_shape_check(index_path='data/processed/index.tsv'):
 '''
 
 '''
-def test_simple_lm(index_path='./data/ivona_processed/eval.tsv'):
+def test_simple_lm(index_path, lm_path, conf_path):
+    from lm import LM
+    import torch.nn.functional as F
     '''
     Performs a simple sanity LM test on a single sample, given some
     dataset.
     '''
-    (_, dataset, dataloader) = load_dataset(index_path, text_only=True)
+    (mapper, dataset, dataloader) = load_dataset(index_path, text_only=True)
 
     batch_idx, data = next(enumerate(dataloader))
     data = data.long()
 
-    lm = torch.load('result/complete_ivona_lm/rnnlm')
+    config = yaml.load(open(conf_path,'r'), Loader=yaml.FullLoader)
+
+    lm = LM(mapper.get_dim(), **config['rnn_lm']['model_para'])
+    lm.load_state_dict(torch.load(lm_path))
     
     lm_hidden = None
     corrects = 0
@@ -78,16 +83,19 @@ def test_simple_lm(index_path='./data/ivona_processed/eval.tsv'):
             next_char = data[:, :, i+1]
 
         lm_hidden, lm_out = lm(current_char, [1], lm_hidden)
-        print(F.softmax(lm_out.view(lm_out.shape[2])))
+        #print(F.softmax(lm_out.view(lm_out.shape[2])))
         #print(F.softmax(lm_out))
         prediction = dataset.idx2char(torch.argmax(lm_out).item())
         
         current_char = dataset.idx2char(data[0, 0, i].item())
         if i+1  < data.shape[2]: 
             next_char = dataset.idx2char(data[0, 0, i+1].item())
+            x = ' '            
+            if next_char == prediction:
+                x = 'X'
 
-            print('current: {0}, next: {1}, prediction: {2}'
-                .format(current_char, next_char, prediction))
+            print('current: {0}, next: {1}, prediction: {2}, [{3}]'
+                .format(current_char, next_char, prediction, x))
 
             if next_char == prediction: corrects += 1
     
@@ -101,4 +109,4 @@ def check_yaml(path='./conf/asr_confs/default.yaml'):
 
 
 if __name__  == '__main__':
-    check_yaml()
+    test_simple_lm('./data/processed/eval_index_byxlen.tsv', './result/newertest/rnn_lm.cpt', './conf/test.yaml')
