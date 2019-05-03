@@ -74,7 +74,7 @@ class Solver:
         ''' Verbose function for print information to stdout'''
         end = '\r' if progress else '\n'
         if progress:
-            msg += '                              ' 
+            msg += '                              '
         else:
             msg = '[INFO]' + msg
 
@@ -86,7 +86,7 @@ class Solver:
 
     def log_text(self, key, val):
         self.log.add_text('{}_{}'.format(self.module_id, key), val, self.step)
-    
+
     def log_image(self, key, val):
         self.log.add_image('{}_{}'.format(self.module_id, key), val, self.step)
 
@@ -95,16 +95,16 @@ class Solver:
         Returns (step, loss) where loss is the best loss
         that has been achived by the associated model and
         the global step when it was achieved. 
-        
+
         If no info is available in the tracker file and a checkpoint file is not
         found then we return (0, 10_000)
         '''
-  
+
         if os.path.isfile(self.tracker_path):
             data = json.load(open(self.tracker_path, 'r'))
             if self.module_id in data and os.path.isfile(self.ckppath):
                 return data[self.module_id]['step'], data[self.module_id]['loss']
-        return 0, 10_000
+        return 0, 10000
 
     def set_globals(self, step, loss):
         if not os.path.isfile(self.tracker_path):

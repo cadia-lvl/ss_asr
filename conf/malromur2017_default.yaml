@@ -52,8 +52,8 @@ rnn_lm:
   
 solver:
   # Paths to prepro indexes
-  train_index_path_byxlen: './processed_data/malromur2017/production_indexes/index_byxlen.tsv'
-  train_index_path_byylen: './processeddata/malromur2017/production_indexes/index_byylen.tsv'
+  train_index_path_byxlen: './processed_data/malromur2017/production_indexes/train_index_byxlen.tsv'
+  train_index_path_byylen: './processed_data/malromur2017/production_indexes/train_index_byylen.tsv'
   eval_index_path_byxlen: './processed_data/malromur2017/production_indexes/eval_index_byxlen.tsv'
   eval_index_path_byylen: './processed_data/malromur2017/production_indexes/eval_index_byylen.tsv'
   test_index_path_byxlen: './processed_data/malromur2017/production_indexes/eval_index_byxlen.tsv'
