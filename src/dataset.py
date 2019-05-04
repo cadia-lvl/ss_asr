@@ -10,7 +10,6 @@ from torch.utils.data import DataLoader, Dataset
 from postprocess import trim_eos
 from preprocess import ALL_CHARS, EOS_TKN, SOS_TKN, TOKENS
 
-
 def load_df(path:str):
     '''
     A basic function, creating a single API to get and
@@ -22,7 +21,6 @@ def load_df(path:str):
         dtype={'normalized_text': str, 'path_to_fbank': str,
             's_len': int, 'unpadded_num_frames': int, 'text_fname': str,
             'wav_fname': str})
-    
 
 class ASRDataset(Dataset):
     def __init__(self, tsv_file: str, batch_size:int=32,
