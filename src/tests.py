@@ -65,7 +65,7 @@ def test_simple_lm(index_path, lm_path, conf_path):
     dataset.
     '''
     (mapper, dataset, dataloader) = load_dataset(index_path, text_only=True)
-
+   
     batch_idx, data = next(enumerate(dataloader))
     data = data.long()
 
@@ -109,4 +109,5 @@ def check_yaml(path='./conf/asr_confs/default.yaml'):
 
 
 if __name__  == '__main__':
-    test_simple_lm('./data/processed/eval_index_byxlen.tsv', './result/newertest/rnn_lm.cpt', './conf/test.yaml')
+    test_simple_lm('./processed_data/malromur2017/production_indexes/eval_index_byxlen.tsv', 
+	'./result/malromur2017_default/rnn_lm.cpt', './conf/malromur2017_default.yaml')
