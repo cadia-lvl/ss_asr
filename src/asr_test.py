@@ -49,7 +49,7 @@ def asr_test(asr_cpt: str, index_path: str, conf_path: str):
     first = att_map[0, :, :].view(att_map.shape[1], att_map.shape[2]).numpy()
 
     plt.imshow(first)
-    plt.show()
+    plt.savefig('asr_test.png')
 
 
     '''
