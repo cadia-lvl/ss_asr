@@ -360,7 +360,7 @@ def update_slen(index:str):
             frame.loc[i, 's_len'] = len(frame.loc[i, 'normalized_text'])
     frame.to_csv(index, sep='\t', index=False, header=False)
 
-def subset_by_t(t: int, index: str, out_index: str):
+def subset_by_t(t: float, index: str, out_index: str):
     from dataset import load_df
     '''
     This works particularilly with the Malromur corpus, since the average
@@ -392,4 +392,4 @@ if __name__ == '__main__':
     #sort_index('./data/processed/index.tsv', 's_len', sort_ascending=False, 
     #    out_index='./data/processed/index_test.tsv')
     #preprocess_malromur('/data/malromur2017/info.txt', '/data/malromur2017/correct', './processed_data/malromur2017')
-    subset_by_t(100, './data/processed/index.tsv', './data/processed/small_idx.tsv')
+    subset_by_t(10*60*60, './processed_data/malromur2017/index.tsv', './processed_data/malromur2017/10hour.tsv')
