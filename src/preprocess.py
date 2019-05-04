@@ -27,8 +27,6 @@ from librosa.core import load, power_to_db
 from librosa.feature import melspectrogram
 import librosa
 
-
-
 CHARS = 'abcdefghijklmnoprstuvxy0123456789'
 ICE_CHARS = 'áéíóúýæöþð'
 # TODO: Seems it is standard to omitt the question mark
@@ -360,7 +358,29 @@ def update_slen(index:str):
     for i, row in frame.iterrows():
         if len(frame.loc[i, 'normalized_text']) != frame.loc[i, 's_len']:
             frame.loc[i, 's_len'] = len(frame.loc[i, 'normalized_text'])
-    frame.to_csv(index, sep='\t', index=False)
+    frame.to_csv(index, sep='\t', index=False, header=False)
+
+def subset_by_t(t: int, index: str, out_index: str):
+    from dataset import load_df
+    '''
+    This works particularilly with the Malromur corpus, since the average
+    length of utterances from malromur was calculated to be ~ 4.5s
+    
+    input arguments:
+    * t (int): How large, in seconds, the subset should be
+    * index (str): Path to a dataset index
+    * out_index (str): Path to where the new index should be stored
+    '''
+    avg_utt_s = 4.5
+    
+    df = load_df(index)
+    num_to_sample =  int(t/avg_utt_s)
+
+    assert num_to_sample < len(df)
+    
+    sampled_df = df.sample(n=num_to_sample)
+    sampled_df.to_csv(out_index, sep='\t', index=False, header=False)
+
 
 if __name__ == '__main__':
     #preprocess('data/ivona_speech_data/ivona_txt', 'data/ivona_speech_data/Kristjan_export', processed_dir='data/ivona_processed')
@@ -369,6 +389,7 @@ if __name__ == '__main__':
     #clean_index_text('./data/ivona_processed/index.tsv')
     #sort_index('./data/ivona_processed/index.tsv', 's_len', sort_ascending=False)
     #update_slen('./data/ivona_processed/index.tsv')
-    sort_index('./data/processed/index.tsv', 's_len', sort_ascending=False, 
-        out_index='./data/processed/index_test.tsv')
+    #sort_index('./data/processed/index.tsv', 's_len', sort_ascending=False, 
+    #    out_index='./data/processed/index_test.tsv')
     #preprocess_malromur('/data/malromur2017/info.txt', '/data/malromur2017/correct', './processed_data/malromur2017')
+    subset_by_t(100, './data/processed/index.tsv', './data/processed/small_idx.tsv')

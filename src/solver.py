@@ -221,7 +221,7 @@ class ASRTrainer(Solver):
                 loss = torch.sum(loss.view(b,t),dim=-1)/torch.sum(y!=0,dim=-1)\
                     .to(device = self.device, dtype=torch.float32)
                 # Mean by batch
-                loss = torch.mean(loss)                
+                loss = torch.mean(loss)     
                                 
                 # Backprop
                 loss.backward()
@@ -274,7 +274,7 @@ class ASRTrainer(Solver):
             label = y[:,1:ans_len+1].contiguous()
            
             seq_loss = self.seq_loss(prediction[:,:ans_len,:]
-                .contiguous().view(-1,prediction.shape[-1]),label.view(-1))
+                .contiguous().view(-1,prediction.shape[-1]), label.view(-1))
 
             # Sum each uttr and devide by length
             seq_loss = torch.sum(seq_loss.view(x.shape[0],-1),dim=-1)\
