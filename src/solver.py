@@ -304,7 +304,7 @@ class ASRTrainer(Solver):
         val_hyp = [self.mapper.translate(p) for p in 
             np.argmax(prediction.cpu().detach(), axis=-1)]
         val_txt = [self.mapper.translate(l) for l in label.cpu()]
-        val_attmaps = draw_att(att_map)
+        val_attmaps = draw_att(att_map, np.argmax(prediction.cpu().detach(), axis=-1))
         
         # Record loss
         self.log_scalar('eval_error', err/val_len)

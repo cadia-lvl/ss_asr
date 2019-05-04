@@ -121,16 +121,18 @@ def calc_err(predict, label, mapper):
     return sum(ds)/len(ds)
 
 # Only draw first attention head
-def draw_att(att_maps):
+def draw_att(att_maps, hyps):
     '''
     Input arguments:
-    * att_maps (Tensor) of [batch_size, encode_steps, decode_steps] tensor
+    * att_maps (Tensor) of [batch_size, decode_steps, encode_steps] tensor
     containing attention scores for the entire batch
+    * hyps (list): A list of predictions
     '''
     attmaps = []
     for i in range(att_maps.shape[0]):
         att_i = att_maps[i, :, :].view(att_maps.shape[1], att_maps.shape[2])
-        attmaps.append(torch.stack([att_i,att_i,att_i],dim=0))
+        att_len = len(trim_eos(hyps[i]))
+        attmaps.append(torch.stack([att_i,att_i,att_i],dim=0)[:, :att_len, :])
     return attmaps
 
 def trim_eos(sequence):

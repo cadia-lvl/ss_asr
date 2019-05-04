@@ -103,7 +103,8 @@ class ASR(nn.Module):
 
         # shape: [batch_size, encode_steps, decode_steps]
         [batch_size, encode_step, _] = encode_feature.shape 
-        output_att_seq = torch.stack(output_att_seq, dim=1).view(batch_size, encode_step, decode_step)
+        output_att_seq = torch.stack(output_att_seq, dim=1)
+        #.view(batch_size, encode_step, decode_step)
         return encode_len, att_output, output_att_seq
 
     def init_parameters(self):
