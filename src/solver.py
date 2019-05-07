@@ -558,11 +558,14 @@ class SAETrainer(Solver):
                 .format(self.best_val_loss, self.step))
 
             torch.save(self.speech_autoenc.state_dict(), self.ckppath)
+            torch.save(self.asr_model.state_dict(), os.path.join(self.ckpdir, 'modified_asr.cpt'))
 
+            '''
             asr_trainer = ASRTrainer(self.config, self.paras)
             asr_trainer.set_model(self.asr_model)
             asr_trainer.load_data()
             asr_trainer.valid()
+            '''
 
         self.speech_autoenc.train()
         self.asr_model.train() 
