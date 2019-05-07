@@ -643,7 +643,7 @@ class TAETrainer(Solver):
             loss = self.loss_metric(enc_out.view(b*t,c), y.view(-1))
             # Sum each uttr and devide by length
             loss = torch.sum(loss.view(b,t),dim=-1)/torch.sum(y!=0,dim=-1)\
-                .to(device = torch.device('cpu'), dtype=torch.float32)
+                .to(device=self.device, dtype=torch.float32)
             
             # Mean by batch
             loss = torch.mean(loss)
@@ -688,7 +688,7 @@ class TAETrainer(Solver):
             loss = self.loss_metric(enc_out.view(b*t,c), y.view(-1))
             # Sum each uttr and devide by length
             loss = torch.sum(loss.view(b,t),dim=-1)/torch.sum(y!=0,dim=-1)\
-                .to(device = torch.device('cpu'), dtype=torch.float32)
+                .to(device=self.device, dtype=torch.float32)
             
             # Mean by batch
             loss = torch.mean(loss)
