@@ -28,7 +28,7 @@ speech_autoencoder:
     num_filters: [32, 64, 256]                       # A list of output filters for the 3 convolutional layers
     pool_kernel_sizes: [[3, 1], [5, 1], [2000, 40]]  # A list of kernel sizes (only 3 values) for the max pooling of each convolutional layer
   
-  train_index: './processed_data/malromur2017/production_indexex/train_index_byxlen.tsv'
+  train_index: './processed_data/malromur2017/production_indexes/train_index_byxlen.tsv'
   eval_index: './processed_data/malromur2017/production_indexes/eval_index_byxlen.tsv'
   train_batch_size: 32
   eval_batch_size: 32
@@ -45,7 +45,7 @@ text_autoencoder:
     num_layers: 2
   drop_rate: 0.1                                   # The probability of a character being dropped in the input
   
-  train_index: './processed_data/malromur2017/production_indexex/train_index_byxlen.tsv'
+  train_index: './processed_data/malromur2017/production_indexes/train_index_byxlen.tsv'
   eval_index: './processed_data/malromur2017/production_indexes/eval_index_byxlen.tsv'
   train_batch_size: 32
   eval_batch_size: 32
@@ -63,7 +63,7 @@ discriminator:
     hidden_dim: 256
   label_smoothing: 0.1
   
-  train_index: './processed_data/malromur2017/production_indexex/train_index_byxlen.tsv'
+  train_index: './processed_data/malromur2017/production_indexe/train_index_byxlen.tsv'
   eval_index: './processed_data/malromur2017/production_indexes/eval_index_byxlen.tsv'
   train_batch_size: 32
   eval_batch_size: 32
@@ -80,7 +80,7 @@ rnn_lm:
     num_layers: 2                                  # Number of RNN layers
     dropout_rate: 0.5                              # Dropout rate used in RNNLM
   
-  train_index: './processed_data/malromur2017/production_indexex/train_index_byylen.tsv'
+  train_index: './processed_data/malromur2017/production_indexes/train_index_byylen.tsv'
   eval_index: './processed_data/malromur2017/production_indexes/eval_index_byylen.tsv'
   train_batch_size: 100
   eval_batch_size: 100
