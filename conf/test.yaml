@@ -9,6 +9,12 @@ asr_model:
     tf_rate: 0.9                                     # Teacher forcing rate (LAS approved)
     feature_dim: 40                                  # Dimensionality of fbanks (has to be same as used in prepro) (LAS approved)
   decode_lm_weight: 0.5
+  train_index: './data/processed/index_byxlen.tsv'
+  eval_index: './data/processed/eval_index_byxlen.tsv'
+  train_batch_size: 32
+  eval_batch_size: 32
+  total_steps: 150000
+  eval_step: 3000
 
 speech_autoencoder:
   optimizer:
@@ -18,7 +24,7 @@ speech_autoencoder:
     kernel_sizes: [[36, 1], [1, 5], [1, 3]]          # A list of kernel sizes for the 3 convolutional layers
     num_filters: [32, 64, 256]                       # A list of output filters for the 3 convolutional layers
     pool_kernel_sizes: [[3, 1], [5, 1], [2000, 40]]  # A list of kernel sizes (only 3 values) for the max pooling of each convolutional layer
-    
+
 text_autoencoder:
   optimizer:
     type: 'Adadelta'
