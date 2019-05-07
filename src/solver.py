@@ -45,9 +45,11 @@ class Solver:
 
         if torch.cuda.is_available(): 
             self.device = torch.device('cuda') 
+            self.verbose("A cuda device is available and will be used.")
             self.paras.gpu = True
         else:
             self.device = torch.device('cpu')
+            self.verbose("A cuda device was not available.")
             self.paras.gpu = False
 
         # e.g. ./runs/experiment_2
@@ -152,7 +154,10 @@ class ASRTrainer(Solver):
         super(ASRTrainer, self).__init__(config, paras , 'asr')
         
     def load_data(self):
-        ''' Load date for training/validation'''
+        '''
+        Load date for training/validation
+        Data must be sorted by length of x
+        '''
         
         (self.mapper, _ ,self.train_set) = load_dataset(
             self.config['asr_model']['train_index'],
