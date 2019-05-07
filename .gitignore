@@ -4,7 +4,8 @@ log/
 result/
 runs/
 processed_data/
-
+backup_logs/
+backup_results/
 *.out
 
 requirements.txt

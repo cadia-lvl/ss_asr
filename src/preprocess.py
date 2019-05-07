@@ -389,7 +389,7 @@ if __name__ == '__main__':
     #clean_index_text('./data/ivona_processed/index.tsv')
     #sort_index('./data/ivona_processed/index.tsv', 's_len', sort_ascending=False)
     #update_slen('./data/ivona_processed/index.tsv')
-    #sort_index('./data/processed/index.tsv', 's_len', sort_ascending=False, 
-    #    out_index='./data/processed/index_test.tsv')
     #preprocess_malromur('/data/malromur2017/info.txt', '/data/malromur2017/correct', './processed_data/malromur2017')
-    subset_by_t(10*60*60, './processed_data/malromur2017/index.tsv', './processed_data/malromur2017/10hour.tsv')
+    #subset_by_t(10*60*60, './processed_data/malromur2017/index.tsv', './processed_data/malromur2017/10hour.tsv')
+    sort_index('./processed_data/malromur2017/10hour.tsv', 'unpadded_num_frames', sort_ascending=False, 
+        out_index='./processed_data/malromur2017/production_indexes/10hour_byxlen.tsv')
