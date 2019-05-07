@@ -155,13 +155,13 @@ class ASRTrainer(Solver):
         ''' Load date for training/validation'''
         
         (self.mapper, _ ,self.train_set) = load_dataset(
-            self.config['solver']['train_index_path_byxlen'],
-            batch_size=self.config['solver']['batch_size'],
+            self.config['asr_model']['train_index'],
+            batch_size=self.config['asr_model']['train_batch_size'],
             use_gpu=self.paras.gpu)
         
         (_, _, self.eval_set) = load_dataset(
-            self.config['solver']['eval_index_path_byxlen'], 
-            batch_size=self.config['solver']['eval_batch_size'],            
+            self.config['solver']['eval_index'], 
+            batch_size=self.config['asr_model']['eval_batch_size'],            
             use_gpu=self.paras.gpu)
         
     def set_model(self, asr=None):
@@ -437,14 +437,15 @@ class SAETrainer(Solver):
         super(SAETrainer, self).__init__(config, paras, 'sae')
     
     def load_data(self):
+        # data must be sorted by length of x.
         (self.mapper, _, self.train_set) = load_dataset(
-            self.config['solver']['train_index_path_byxlen'], 
-            batch_size=self.config['solver']['batch_size'], 
+            self.config['speech_autoencoder']['train_index'], 
+            batch_size=self.config['speech_autoencoder']['train_batch_size'], 
             use_gpu=self.paras.gpu)
 
         (_, _, self.eval_set) = load_dataset(
-            self.config['solver']['eval_index_path_byxlen'], 
-            batch_size=self.config['solver']['eval_batch_size'],
+            self.config['speech_autoencoder']['eval_index'], 
+            batch_size=self.config['speech_autoencoder']['eval_batch_size'],
             use_gpu=self.paras.gpu)
     
     def set_model(self):
@@ -571,16 +572,18 @@ class TAETrainer(Solver):
         These are loaded with text only and noise, meaning dataloader
         will return (clean_y, noise_y) for both the training and validation
         sets
+
+        Also, data must be sorted by length of y
         '''
         (self.mapper, self.dataset, self.train_set) = load_dataset(
-            self.config['solver']['train_index_path_byylen'], 
-            batch_size=self.config['solver']['batch_size'], 
+            self.config['text_autoencoder']['train_index'], 
+            batch_size=self.config['text_autoencoder']['train_batch_size'], 
             use_gpu=self.paras.gpu, text_only=True, 
             drop_rate=self.config['text_autoencoder']['drop_rate'])
 
         (_, _, self.eval_set) = load_dataset(
-            self.config['solver']['eval_index_path_byylen'], 
-            batch_size=self.config['solver']['eval_batch_size'],
+            self.config['text_autoencoder']['eval_index'], 
+            batch_size=self.config['text_autoencoder']['eval_batch_size'],
             use_gpu=self.paras.gpu, text_only=True,
             drop_rate=self.config['text_autoencoder']['drop_rate'])
 
@@ -719,14 +722,15 @@ class AdvTrainer(Solver):
         super(AdvTrainer, self).__init__(config, paras, 'adv')
 
     def load_data(self):
+        # data is sorted by length of x
         (self.mapper, self.dataset, self.train_set) = load_dataset(
-            self.config['solver']['train_index_path_byxlen'], 
-            batch_size=self.config['solver']['batch_size'], 
+            self.config['discriminator']['train_index'], 
+            batch_size=self.config['discriminator']['train_batch_size'], 
             use_gpu=self.paras.gpu)
 
         (_, _, self.eval_set) = load_dataset(
-            self.config['solver']['eval_index_path_byxlen'], 
-            batch_size=self.config['solver']['eval_batch_size'],
+            self.config['discriminator']['eval_index'], 
+            batch_size=self.config['discriminator']['eval_batch_size'],
             use_gpu=self.paras.gpu)
         
     def set_model(self):
@@ -907,15 +911,19 @@ class LMTrainer(Solver):
         super(LMTrainer, self).__init__(config, paras, 'rnn_lm')
 
     def load_data(self):
-        ''' Load training / evaluation sets '''
+        ''' 
+        Load training / evaluation sets
+        
+        Data must be sorted by length of y
+        '''
         (self.mapper, _, self.train_set) = load_dataset(
-            self.config['solver']['train_index_path_byylen'], 
-            batch_size=self.config['solver']['batch_size'], 
+            self.config['rnn_lm']['train_index'], 
+            batch_size=self.config['rnn_lm']['train_batch_size'], 
             use_gpu=self.paras.gpu, text_only=True)
 
         (_, _, self.eval_set) = load_dataset(
-            self.config['solver']['eval_index_path_byylen'], 
-            batch_size=self.config['solver']['eval_batch_size'],
+            self.config['rnn_lm']['eval_index'], 
+            batch_size=self.config['rnn_lm']['eval_batch_size'],
             use_gpu=self.paras.gpu, text_only=True)
 
     def set_model(self):
