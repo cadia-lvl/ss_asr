@@ -38,11 +38,6 @@ class Solver:
         self.paras = paras
         self.module_id = module_id
         
-        # Logger Settings
-        self.valid_step = config['solver']['eval_step']
-        # Training details
-        self.max_step = config['solver']['total_steps']
-
         if torch.cuda.is_available(): 
             self.device = torch.device('cuda') 
             self.verbose("A cuda device is available and will be used.")
@@ -158,7 +153,9 @@ class ASRTrainer(Solver):
         Load date for training/validation
         Data must be sorted by length of x
         '''
-        
+        self.valid_step = self.config['asr_model']['eval_step']
+        self.max_step = self.config['asr_model']['total_steps']
+
         (self.mapper, _ ,self.train_set) = load_dataset(
             self.config['asr_model']['train_index'],
             batch_size=self.config['asr_model']['train_batch_size'],
@@ -443,6 +440,11 @@ class SAETrainer(Solver):
     
     def load_data(self):
         # data must be sorted by length of x.
+
+        self.valid_step = self.config['speech_autoencoder']['eval_step']
+        self.max_step = self.config['speech_autoencoder']['total_steps']
+
+
         (self.mapper, _, self.train_set) = load_dataset(
             self.config['speech_autoencoder']['train_index'], 
             batch_size=self.config['speech_autoencoder']['train_batch_size'], 
@@ -580,6 +582,10 @@ class TAETrainer(Solver):
 
         Also, data must be sorted by length of y
         '''
+
+        self.valid_step = self.config['text_autoencoder']['eval_step']
+        self.max_step = self.config['text_autoencoder']['total_steps']
+
         (self.mapper, self.dataset, self.train_set) = load_dataset(
             self.config['text_autoencoder']['train_index'], 
             batch_size=self.config['text_autoencoder']['train_batch_size'], 
@@ -728,6 +734,10 @@ class AdvTrainer(Solver):
 
     def load_data(self):
         # data is sorted by length of x
+
+        self.valid_step = self.config['discriminator']['eval_step']
+        self.max_step = self.config['discriminator']['total_steps']
+
         (self.mapper, self.dataset, self.train_set) = load_dataset(
             self.config['discriminator']['train_index'], 
             batch_size=self.config['discriminator']['train_batch_size'], 
@@ -921,6 +931,10 @@ class LMTrainer(Solver):
         
         Data must be sorted by length of y
         '''
+        self.valid_step = self.config['rnn_lm']['eval_step']
+        self.max_step = self.config['rnn_lm']['total_steps']
+
+
         (self.mapper, _, self.train_set) = load_dataset(
             self.config['rnn_lm']['train_index'], 
             batch_size=self.config['rnn_lm']['train_batch_size'], 
