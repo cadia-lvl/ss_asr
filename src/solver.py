@@ -483,7 +483,7 @@ class SAETrainer(Solver):
         for x, y in self.train_set:
             self.verbose('Global step: {}'.format(self.step), progress=True)
 
-            x, x_lens = prepare_x(x)
+            x, x_lens = prepare_x(x, device=self.device)
             self.optim.zero_grad()
 
             enc_out = self.speech_autoenc(self.asr_model, x, x_lens)
@@ -525,7 +525,7 @@ class SAETrainer(Solver):
             self.verbose('Validation step - {} ( {} / {} )'.format(
                 self.step, b_idx, len(self.eval_set)), progress=True)
             
-            x, x_lens = prepare_x(x)
+            x, x_lens = prepare_x(x, device=self.device)
 
             enc_out = self.speech_autoenc(self.asr_model, x, x_lens)
             # pad the encoder output UP to the maximum batch time frames and 
@@ -626,10 +626,10 @@ class TAETrainer(Solver):
         for b_idx, (y, y_noise) in enumerate(self.train_set):
             self.verbose('Global step: {}'.format(self.step), progress=True)
 
-            y, y_lens = prepare_y(y)
+            y, y_lens = prepare_y(y, device=self.device)
             y_max_len = max(y_lens)
 
-            y_noise, y_noise_lens = prepare_y(y_noise)
+            y_noise, y_noise_lens = prepare_y(y_noise, device=self.device)
             y_noise_max_lens = max(y_noise_lens)
             
             self.optim.zero_grad()
@@ -673,10 +673,10 @@ class TAETrainer(Solver):
             self.verbose('Validation step - {} ( {} / {} )'.format(
                 self.step, b_idx, len(self.eval_set)), progress=True)
             
-            y, y_lens = prepare_y(y)
+            y, y_lens = prepare_y(y, device=self.device)
             y_max_len = max(y_lens)
 
-            y_noise, y_noise_lens = prepare_y(y_noise)
+            y_noise, y_noise_lens = prepare_y(y_noise, device=self.device)
             y_noise_max_lens = max(y_noise_lens)
             
             # decode steps == longest target
@@ -771,8 +771,8 @@ class AdvTrainer(Solver):
             self.verbose('Global step - {} ( {} / {} )'.format(
                 self.step, b_idx, len(self.train_set)), progress=True)     
 
-            x, x_lens = prepare_x(x)    
-            y, y_lens = prepare_y(y)
+            x, x_lens = prepare_x(x, device=self.device)    
+            y, y_lens = prepare_y(y, device=self.device)
             
             batch_size = x.shape[0]
             '''
@@ -859,8 +859,8 @@ class AdvTrainer(Solver):
             self.verbose('Validation step - {} ( {} / {} )'.format(
                 self.step, b_idx, len(self.eval_set)), progress=True)
             
-            x, x_lens = prepare_x(x)    
-            y, y_lens = prepare_y(y)
+            x, x_lens = prepare_x(x, device=self.device)    
+            y, y_lens = prepare_y(y, device=self.device)
             
             batch_size = x.shape[0]
 
