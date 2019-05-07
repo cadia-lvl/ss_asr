@@ -165,7 +165,7 @@ class ASRTrainer(Solver):
             use_gpu=self.paras.gpu)
         
         (_, _, self.eval_set) = load_dataset(
-            self.config['solver']['eval_index'], 
+            self.config['asr_model']['eval_index'], 
             batch_size=self.config['asr_model']['eval_batch_size'],            
             use_gpu=self.paras.gpu)
         
