@@ -637,8 +637,8 @@ class TAETrainer(Solver):
         self.loss_metric = torch.nn.CrossEntropyLoss(ignore_index=0, 
             reduction='none').to(self.device)
 
-        def get_tae_model(self):
-            return self.text_autoenc
+    def get_tae_model(self):
+        return self.text_autoenc
 
     def exec(self):
         self.verbose('Training set total '+str(len(self.train_set))+' batches.')
