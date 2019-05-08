@@ -21,8 +21,8 @@ asr_model:
 
 speech_autoencoder:
   optimizer:
-    type: 'Adadelta'                                    # Optimizer used for training speech auto encoder (Drexler approved)
-    learning_rate: 1.0                             # Learning rate for opt (Drexler approved)
+    type: 'Adadelta'                                 # Optimizer used for training speech auto encoder (Drexler approved)
+    learning_rate: 1.0                               # Learning rate for opt (Drexler approved)
   model_para:
     kernel_sizes: [[36, 1], [1, 5], [1, 3]]          # A list of kernel sizes for the 3 convolutional layers
     num_filters: [32, 64, 256]                       # A list of output filters for the 3 convolutional layers
@@ -63,7 +63,7 @@ discriminator:
     hidden_dim: 256
   label_smoothing: 0.1
   
-  train_index: './processed_data/malromur2017/production_indexe/train_index_byxlen.tsv'
+  train_index: './processed_data/malromur2017/production_indexes/train_index_byxlen.tsv'
   eval_index: './processed_data/malromur2017/production_indexes/eval_index_byxlen.tsv'
   train_batch_size: 32
   eval_batch_size: 32
