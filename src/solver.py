@@ -73,7 +73,7 @@ class Solver:
         if progress:
             msg += '                              '
         else:
-            msg = '[INFO]' + msg
+            msg = '[INFO ({})] '.format(self.module_id) + msg
 
         if self.paras.verbose:
             print(msg, end=end)
@@ -498,14 +498,15 @@ class SAETrainer(Solver):
             # pad x DOWN to the same number of frames
             batch_t = max(x_lens)
             x = x[:, :batch_t, :]
-            enc_final = torch.zeros([enc_out.shape[0], batch_t, enc_out.shape[2]])
+            enc_final = torch.zeros([enc_out.shape[0], batch_t, enc_out.shape[2]]).to(self.device)
             enc_final[:, :enc_out.shape[1], :] = enc_out
-        
+
             loss = self.loss_metric(enc_final, x)
 
             # Divide each by length of x and sum, then take the average over the
             # batch
-            loss = torch.sum(loss.view(loss.shape[0], -1)) / torch.Tensor(x_lens)
+            loss = torch.sum(loss.view(loss.shape[0], -1))/torch.Tensor(x_lens)\
+                .to(self.device)
             loss = torch.mean(loss)
             loss.backward()
             self.grad_clip(self.speech_autoenc.parameters(), self.optim)
@@ -539,14 +540,15 @@ class SAETrainer(Solver):
             # pad x DOWN to the same number of frames
             batch_t = max(x_lens)
             x = x[:, :batch_t, :]
-            enc_final = torch.zeros([enc_out.shape[0], batch_t, enc_out.shape[2]])
+            enc_final = torch.zeros([enc_out.shape[0], batch_t, enc_out.shape[2]]).to(self.device)
             enc_final[:, :enc_out.shape[1], :] = enc_out
-        
+
             loss = self.loss_metric(enc_final, x)
 
             # Divide each by length of x and sum, then take the average over the
             # batch
-            loss = torch.sum(loss.view(loss.shape[0], -1)) / torch.Tensor(x_lens)
+            loss = torch.sum(loss.view(loss.shape[0], -1)) / torch.Tensor(x_lens)\
+                .to(self.device)
             loss = torch.mean(loss)
            
             avg_loss += loss.detach()
@@ -811,13 +813,14 @@ class AdvTrainer(Solver):
             DISCRIMINATOR TRAINING
             maximize log(D(x)) + log(1 - D(G(z)))
             '''
-            self.discriminator.zero_grad()
+            #self.discriminator.zero_grad()
 
             '''Discriminator real data training'''
             real_data = self.data_distribution(y) # [bs, seq, 512]
             D_out = self.discriminator(real_data)
-            real_labels = torch.ones(batch_size, real_data.shape[1]) \
+            real_labels = torch.ones(batch_size, real_data.shape[1]).to(self.device) \
                 - self.config['discriminator']['label_smoothing']
+
             D_realloss = self.loss_metric(D_out.squeeze(dim=2), real_labels)
             D_realloss.backward()
 
@@ -826,7 +829,7 @@ class AdvTrainer(Solver):
             # Note: fake_data.detach() is used here to avoid backpropping
             # through the generator. (see grad_pointers.gp_6 for details)
             D_out = self.discriminator(fake_data.detach())
-            fake_labels = torch.zeros(batch_size, fake_data.shape[1])
+            fake_labels = torch.zeros(batch_size, fake_data.shape[1]).to(self.device)
             D_fakeloss = self.loss_metric(D_out.squeeze(dim=2), fake_labels)
             D_fakeloss.backward()
             
@@ -844,11 +847,11 @@ class AdvTrainer(Solver):
             GENERATOR TRAINING 
             maximize log(D(G(z)))
             '''
-            self.asr_model.encoder.zero_grad()
+            #self.asr_model.encoder.zero_grad()
 
             # fake labels for the listener are the true labels for the
             # discriminator 
-            fake_labels = torch.ones(batch_size, fake_data.shape[1])
+            fake_labels = torch.ones(batch_size, fake_data.shape[1]).to(self.device)
             
             '''
             we cant call .detach() here, to avoid gradient calculations
@@ -874,7 +877,7 @@ class AdvTrainer(Solver):
             if self.step % self.valid_step == 0 and self.step != 0:
                 self.G_optim.zero_grad()
                 self.D_optim.zero_grad()
-                self.validate_discriminator()
+                self.valid()
             
             self.step += 1
             
@@ -882,7 +885,7 @@ class AdvTrainer(Solver):
                 self.verbose('Stopping after reaching maximum training steps')
                 break
         
-    def validate_discriminator(self):
+    def valid(self):
         self.discriminator.eval()
 
         avg_loss = 0.0
@@ -899,7 +902,7 @@ class AdvTrainer(Solver):
             '''Discriminator real data training'''
             real_data = self.data_distribution(y) # [bs, seq, 512]
             D_out = self.discriminator(real_data)
-            real_labels = torch.ones(batch_size, real_data.shape[1])
+            real_labels = torch.ones(batch_size, real_data.shape[1]).to(self.device)
             
             D_realloss = self.loss_metric(D_out.squeeze(dim=2), real_labels)
 
@@ -908,7 +911,7 @@ class AdvTrainer(Solver):
             # Note: fake_data.detach() is used here to avoid backpropping
             # through the generator. (see grad_pointers.gp_6 for details)
             D_out = self.discriminator(fake_data.detach())
-            fake_labels = torch.zeros(batch_size, fake_data.shape[1])
+            fake_labels = torch.zeros(batch_size, fake_data.shape[1]).to(self.device)
             D_fakeloss = self.loss_metric(D_out.squeeze(dim=2), fake_labels)
             
             # update the parameters and collect total loss
@@ -931,14 +934,6 @@ class AdvTrainer(Solver):
                 .format(self.best_val_loss, self.step))
 
             torch.save(self.discriminator.state_dict(), self.ckppath)
-
-            '''
-            Very experimental !!!
-            '''
-            asr_trainer = ASRTrainer(self.config, self.paras)
-            asr_trainer.set_model(self.asr_model)
-            asr_trainer.load_data()
-            asr_trainer.valid()
 
         self.discriminator.train()
 
