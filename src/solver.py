@@ -185,6 +185,9 @@ class ASRTrainer(Solver):
         self.optim = self.optim(self.asr_model.parameters(), 
             lr=self.config['asr_model']['optimizer']['learning_rate'], eps=1e-8)
 
+    def get_asr_model(self):
+        return self.asr_model
+
     def exec(self):
         ''' Training End-to-end ASR system'''
         
@@ -455,10 +458,12 @@ class SAETrainer(Solver):
             batch_size=self.config['speech_autoencoder']['eval_batch_size'],
             use_gpu=self.paras.gpu)
     
-    def set_model(self):
-
-        self.asr_model = self.setup_module(ASR, os.path.join(self.ckpdir, 'asr.cpt'), 
-            self.mapper.get_dim(), **self.config['asr_model']['model_para'])
+    def set_model(self, asr_model=None):
+        if asr_model is not None:
+            self.asr_model = asr_model
+        else:
+            self.asr_model = self.setup_module(ASR, os.path.join(self.ckpdir, 'asr.cpt'), 
+                self.mapper.get_dim(), **self.config['asr_model']['model_para'])
 
         self.speech_autoenc = self.setup_module(SpeechAutoEncoder, self.ckppath, 
             self.asr_model.encoder.out_dim, self.config['asr_model']['model_para']['feature_dim'],
@@ -601,9 +606,12 @@ class TAETrainer(Solver):
             use_gpu=self.paras.gpu, text_only=True,
             drop_rate=self.config['text_autoencoder']['drop_rate'])
 
-    def set_model(self):
-        self.asr_model = self.setup_module(ASR, os.path.join(self.ckpdir, 'asr.cpt'), 
-            self.mapper.get_dim(), **self.config['asr_model']['model_para'])
+    def set_model(self, asr_model=None):
+        if asr_model is not None:
+            self.asr_model = asr_model
+        else:
+            self.asr_model = self.setup_module(ASR, os.path.join(self.ckpdir, 'asr.cpt'), 
+                self.mapper.get_dim(), **self.config['asr_model']['model_para'])
 
         self.text_autoenc = self.setup_module(TextAutoEncoder, self.ckppath,
             self.mapper.get_dim(), **self.config['text_autoencoder']['model_para'])        
@@ -628,6 +636,9 @@ class TAETrainer(Solver):
 
         self.loss_metric = torch.nn.CrossEntropyLoss(ignore_index=0, 
             reduction='none').to(self.device)
+
+        def get_tae_model(self):
+            return self.text_autoenc
 
     def exec(self):
         self.verbose('Training set total '+str(len(self.train_set))+' batches.')
@@ -754,12 +765,17 @@ class AdvTrainer(Solver):
             batch_size=self.config['discriminator']['eval_batch_size'],
             use_gpu=self.paras.gpu)
         
-    def set_model(self):
-        self.asr_model = self.setup_module(ASR, os.path.join(self.ckpdir, 'asr.cpt'), 
-            self.mapper.get_dim(), **self.config['asr_model']['model_para'])
-
-        self.text_autoenc = self.setup_module(TextAutoEncoder, os.path.join(self.ckpdir, 'tae.cpt'),
-            self.mapper.get_dim(), **self.config['text_autoencoder']['model_para'])        
+    def set_model(self, asr_model=None, tae_model=None):
+        if asr_model is not None:
+            self.asr_model = asr_model
+        else:
+            self.asr_model = self.setup_module(ASR, os.path.join(self.ckpdir, 'asr.cpt'), 
+                self.mapper.get_dim(), **self.config['asr_model']['model_para'])
+        if tae_model is not None:
+            self.text_autoenc = tae_model
+        else:
+            self.text_autoenc = self.setup_module(TextAutoEncoder, os.path.join(self.ckpdir, 'tae.cpt'),
+                self.mapper.get_dim(), **self.config['text_autoencoder']['model_para'])        
 
         self.discriminator = self.setup_module(Discriminator, self.ckppath,
             self.asr_model.encoder.get_outdim(), **self.config['discriminator']['model_para'])
