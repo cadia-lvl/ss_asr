@@ -73,7 +73,11 @@ class Solver:
         if progress:
             msg += '                              '
         else:
+<<<<<<< HEAD
             msg = '[INFO ({})] '.format(self.module_id) + msg
+=======
+            msg = '[INFO ({})]'.format(self.module_id) + msg
+>>>>>>> Local changes
 
         if self.paras.verbose:
             print(msg, end=end)
@@ -500,7 +504,10 @@ class SAETrainer(Solver):
             x = x[:, :batch_t, :]
             enc_final = torch.zeros([enc_out.shape[0], batch_t, enc_out.shape[2]]).to(self.device)
             enc_final[:, :enc_out.shape[1], :] = enc_out
+<<<<<<< HEAD
 
+=======
+>>>>>>> Local changes
             loss = self.loss_metric(enc_final, x)
 
             # Divide each by length of x and sum, then take the average over the

@@ -35,9 +35,14 @@ class Discriminator(nn.Module):
         '''
         super(Discriminator, self).__init__()
 
-        self.in_layer = nn.Linear(in_dim, hidden_dim)
-        self.l_1 = nn.Linear(hidden_dim, hidden_dim)
-        self.l_2 = nn.Linear(hidden_dim, 1)
+        self.core = nn.Sequential(
+            torch.nn.Linear(in_dim, hidden_dim),
+            torch.nn.ReLU(),
+            torch.nn.Linear(hidden_dim, 1))
+
+        self.in_layer = torch.rnn.Linear(in_dim, hidden_dim)
+        self.l_1 = nn.Linear(hidden_dim, 1)
+        #self.l_2 = nn.Linear(hidden_dim, 1)
     
     def forward(self, x):
         '''
@@ -48,9 +53,11 @@ class Discriminator(nn.Module):
         the input 3-dimensional, pytorch just thinks about [bs, *, features]
         as [bs x *, features] (varified)        
         '''
-        out = self.in_layer(x)
-        out = self.l_1(out)
-        out = self.l_2(out)
+        #out = self.in_layer(x)
+        #out = self.l_1(out)
+        #out = self.l_1(out)
+
+        out = self.core(x)
         # apply the sigmoid function to get outputs in the (0,1) range
         out = torch.sigmoid(out)
         return out

@@ -138,9 +138,25 @@ class SpeechDecoder(nn.Module):
         '''
         super(SpeechDecoder, self).__init__()
 
-        self.leaky_1 = nn.LeakyReLU()
-        self.leaky_2 = nn.LeakyReLU()
+
+        #self.leaky_1 = nn.LeakyReLU()
+        #self.leaky_2 = nn.LeakyReLU()
+        '''
+        self.leaky_1 = nn.Sequential(
+            nn.Linear(in_dim, in_dim),
+            nn.LeakyReLU())
+        self.leaky_2 = nn.Sequential(
+            nn.Linear(in_dim, in_dim),
+            nn.LeakyReLU())
         self.out = nn.Linear(in_dim, out_dim)
+        '''
+        self.core = nn.Sequential(
+            nn.Linear(in_dim, in_dim),
+            nn.LeakyReLU(),
+            nn.Linear(in_dim, in_dim),
+            nn.LeakyReLU(),
+            nn.Linear(in_dim, out_dim)
+        )
     
     def forward(self, x):
         '''
@@ -152,10 +168,10 @@ class SpeechDecoder(nn.Module):
         Output: A [batch_size, self.out_dim], where out dim is reshapable into 8
         original frames of input fbanks.
         '''
-        x = self.leaky_1(x)
-        x = self.leaky_2(x)
-        x = self.out(x)
-        return x
+        #x = self.leaky_1(x)
+        #x = self.leaky_2(x)
+        #x = self.out(x)
+        return self.core(x)
 
 def test_solver():
     from asr import Listener
