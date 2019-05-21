@@ -11,13 +11,13 @@ asr_model:
   decode_lm_weight: 0.5
   
   train_index: './processed_data/malromur2017/production_indexes/2_5hour_byxlen.tsv'
-  eval_index: './processed_data/malromur2017/production_indexes/eval_index_byxlen.tsv'
+  eval_index: './processed_data/malromur2017/production_indexes/1000eval_byxlen.tsv'
   test_index: ''
-  train_batch_size: 32
-  eval_batch_size: 32
+  train_batch_size: 16
+  eval_batch_size: 16
   test_batch_size: 1
   total_steps: 150000
-  eval_step: 3000
+  eval_step: 1500
 
 speech_autoencoder:
   optimizer:
@@ -78,7 +78,7 @@ rnn_lm:
     emb_dim: 650                                   # Word embedding dimensionality
     hidden_dim: 650                                # Hidden dimensionality of RNN unit
     num_layers: 2                                  # Number of RNN layers
-    dropout_rate: 0.5                              # Dropout rate used in RNNLM
+    dropout_rate: 0.1                              # Dropout rate used in RNNLM
   
   train_index: './processed_data/malromur2017/production_indexes/train_index_byylen.tsv'
   eval_index: './processed_data/malromur2017/production_indexes/eval_index_byylen.tsv'

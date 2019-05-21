@@ -9,21 +9,24 @@ import numpy as np
 import torch
 import yaml
 
-from solver import (AdvTrainer, ASRTrainer, LMTrainer, SAETrainer,
-                    TAETrainer, ASRTester, CHARLMTrainer)
+from preprocess import SOS_TKN
+from solver import CHARLMTrainer
 
 torch.backends.cudnn.deterministic = True
 
 # Arguments
 parser = argparse.ArgumentParser(description='Training E2E asr.')
-parser.add_argument('--type', type=str, 
-    help='asr | rnn_lm | tae | sae | adv | test | char_lm',
-    default='asr')
 parser.add_argument('--name', type=str, help='Name for logging.', 
     default='newtest')
 parser.add_argument('--config', type=str, 
     default='./conf/test.yaml', 
     help='Path to experiment config.')
+parser.add_argument('--start', type=str, default='pétur helgi hefur aldrei ',
+    help='The start of the generated string')
+parser.add_argument('--length', type=int, default=300,
+    help='The total length of the predicted string')
+parser.add_argument('--temp', type=float, default=0.6,
+    help='Low=more correct, high=more varying')
 parser.add_argument('--logdir', default='runs/', 
     type=str, help='Logging path.', required=False)
 parser.add_argument('--ckpdir', default='result/', 
@@ -33,14 +36,8 @@ parser.add_argument('--seed', default=1, type=int,
 parser.add_argument('--verbose', default=True, 
     type=bool, required=False)
 
+
 paras = parser.parse_args()
-
-# note :  'rnn_lm': LMTrainer, was removed since validation error
-# never got better. Use CHARLMTrainer instead.
-
-type_map = {'asr': ASRTrainer, 'tae': TAETrainer, 
-    'sae': SAETrainer, 'adv': AdvTrainer, 'test': ASRTester, 'char_lm': CHARLMTrainer}
-
 config = yaml.load(open(paras.config,'r'), Loader=yaml.FullLoader)
 
 random.seed(paras.seed)
@@ -48,7 +45,9 @@ np.random.seed(paras.seed)
 torch.manual_seed(paras.seed)
 if torch.cuda.is_available(): torch.cuda.manual_seed_all(paras.seed)
 
-trainer = type_map[paras.type](config,paras)
+trainer = CHARLMTrainer(config,paras)
 trainer.load_data()
 trainer.set_model()
-trainer.exec()
+generated = trainer.generate(length=paras.length, temp=paras.temp, start=paras.start)
+print(generated)
+#trainer.exec()

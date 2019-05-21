@@ -24,7 +24,7 @@ class LM(nn.Module):
         self.lstm = nn.LSTM(
             num_layers=num_layers,
             input_size=emb_dim,
-            hidden_size= hidden_dim,
+            hidden_size=hidden_dim,
             dropout=dropout_rate)
 
         self.out = nn.Linear(hidden_dim, out_dim)
@@ -39,9 +39,3 @@ class LM(nn.Module):
         outputs = self.out(self.drop_2(outputs))
 
         return hidden, outputs
-
-'''
-TODO: Try creating an n-gram LM as well.
-(see: https://github.com/L1aoXingyu/pytorch-beginner/blob/master/06-Natural%20Language%20Process/N-Gram.py)
-
-'''

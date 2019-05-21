@@ -10,6 +10,7 @@ import numpy as np
 import math
 
 from postprocess import Hypothesis
+from preprocess import EOS_TKN
 
 class ASR(nn.Module):
     def __init__(self, output_dim: int, encoder_state_size: int, 
@@ -57,7 +58,7 @@ class ASR(nn.Module):
         '''
 
         # encode_feature shape : [batch_size, ~seq/8, listener.state_size*2]
-        encode_feature, encode_len = self.encoder(audio_feature, state_len)
+        encode_feature, encode_len = self.encoder(audio_feature, state_len) 
 
         # Attention based decoding
         if teacher is not None:
@@ -106,6 +107,77 @@ class ASR(nn.Module):
         output_att_seq = torch.stack(output_att_seq, dim=1)
         #.view(batch_size, encode_step, decode_step)
         return encode_len, att_output, output_att_seq
+    
+    def decode(self, x, x_len, rnn_lm, mapper):
+        '''
+        This is only used for inference and testing. Both the ASR
+        and the supplied LM should be in validation mode.
+
+        Input arguments:
+        x (tensor): A single audio sample, shape = [1, seq, features]
+        x_len (list): The ouput of dataset.prepare_x(x)
+        rnn_lm (nn.Module): A language model
+        mapper (object): A dataset.mapper instance
+        '''
+        lm_weight = 0.5
+        curr_device = next(self.decoder.parameters()).device
+
+        assert len(x.shape) == 3 and x.shape[0] == 1
+
+        decoding_steps = 0
+        max_decoding_steps = 200
+        # encode_feature shape : [batch_size, ~seq/8, listener.state_size*2]
+        encode_feature, encode_len = self.encoder(x, x_len)
+
+        # Init (init char = <SOS>, reset all rnn state and cell)
+        self.decoder.init_rnn(encode_feature.shape[0], encode_feature.device)
+        self.attention.reset_enc_mem()
+        batch_size = x.shape[0]
+        last_char = self.embed(torch.zeros((batch_size), dtype=torch.long).to(curr_device))
+        last_char_idx = torch.LongTensor([[0]]).to(curr_device)
+        output_char_seq = []
+        output_att_seq = []
+        char_predicts = []
+        # we keep decoding until <EOS> has been emitted
+        lm_hidden = None
+        while decoding_steps < max_decoding_steps:
+            # Attend (inputs current state of first layer, encoded features)
+            # shapes: attn_score [batch_size, encode_steps]
+            attention_score, context = self.attention(
+                self.decoder.state_list[0], encode_feature, encode_len)
+            # Spell (inputs context + embedded last character)                
+            decoder_input = torch.cat([last_char, context],dim=-1)
+            dec_out = self.decoder(decoder_input)
+            
+            # To char
+            cur_char = F.log_softmax(self.char_trans(dec_out), dim=-1)
+            lm_hidden, lm_out = rnn_lm(last_char_idx, [1], lm_hidden)
+            cur_char += lm_weight * F.log_softmax(lm_out.squeeze(1), dim=-1)
+            predicted_char = torch.argmax(cur_char,dim=-1)
+            last_char_idx = torch.LongTensor([[predicted_char]]).to(curr_device)
+            char_predicts.append(mapper.ind_to_char(predicted_char.item()))
+            last_char = self.embed(predicted_char)
+
+            output_char_seq.append(cur_char)
+            output_att_seq.append(attention_score.cpu().detach())
+
+            if predicted_char.item() == mapper.char_to_ind(EOS_TKN):
+                print("Stopping because of EOS")
+                break
+            
+            decoding_steps += 1
+
+        print(''.join(c for c in char_predicts))
+
+        att_output = torch.stack(output_char_seq, dim=1)
+
+        # shape: [batch_size, encode_steps, decode_steps]
+        [batch_size, encode_step, _] = encode_feature.shape 
+        output_att_seq = torch.stack(output_att_seq, dim=1)
+        #.view(batch_size, encode_step, decode_step)
+        return encode_len, att_output, output_att_seq
+
+
 
     def init_parameters(self):
         def lecun_normal_init_parameters(module):
@@ -173,7 +245,8 @@ class ASR(nn.Module):
         
         # TODO check out this bug
         # WeirD BUG here if all args. are not passed...
-        prev_top_outputs.append(Hypothesis(self.decoder.hidden_state, self.embed)) 
+        prev_top_outputs.append(Hypothesis(self.decoder.hidden_state, self.embed, 
+            output_seq=[], output_scores=[], lm_state=None)) 
         
         # Decode
         for t in range(decode_step):

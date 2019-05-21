@@ -243,7 +243,7 @@ def text_from_file(file_path: str) -> str:
     s = ''
     return ''.join(s for s in open(file_path, 'r')).strip()
 
-def normalize_string(s: str) -> Tuple[str, int]:
+def normalize_string(s: str, append_tokens=True) -> Tuple[str, int]:
     '''
     1. Lower case
     2. Alphanumerics (a,b,c,..,0,1,2..)
@@ -263,7 +263,8 @@ def normalize_string(s: str) -> Tuple[str, int]:
     s = re.sub(r"[^0-9{}]".format(CHARS+ICE_CHARS+SPECIAL_CHARS), UNK_TKN, s)
 
     # pad with <sos> and <eos>
-    s = SOS_TKN + s + EOS_TKN
+    if append_tokens:
+        s = SOS_TKN + s + EOS_TKN
 
     return s, s_len
 
@@ -381,6 +382,21 @@ def subset_by_t(t: float, index: str, out_index: str):
     sampled_df = df.sample(n=num_to_sample)
     sampled_df.to_csv(out_index, sep='\t', index=False, header=False)
 
+def subset_by_n(n: int, index: str, out_index: str):
+    from dataset import load_df
+    '''
+    This works particularilly with the Malromur corpus, since the average
+    length of utterances from malromur was calculated to be ~ 4.5s
+    
+    input arguments:
+    * t (int): How large, in seconds, the subset should be
+    * index (str): Path to a dataset index
+    * out_index (str): Path to where the new index should be stored
+    '''
+    df = load_df(index)
+    
+    sampled_df = df.sample(n=n)
+    sampled_df.to_csv(out_index, sep='\t', index=False, header=False)
 
 if __name__ == '__main__':
     #preprocess('data/ivona_speech_data/ivona_txt', 'data/ivona_speech_data/Kristjan_export', processed_dir='data/ivona_processed')
@@ -391,5 +407,9 @@ if __name__ == '__main__':
     #update_slen('./data/ivona_processed/index.tsv')
     #preprocess_malromur('/data/malromur2017/info.txt', '/data/malromur2017/correct', './processed_data/malromur2017')
     #subset_by_t(10*60*60, './processed_data/malromur2017/index.tsv', './processed_data/malromur2017/10hour.tsv')
-    sort_index('./processed_data/malromur2017/10hour.tsv', 'unpadded_num_frames', sort_ascending=False, 
-        out_index='./processed_data/malromur2017/production_indexes/10hour_byxlen.tsv')
+    
+    #sort_index('./processed_data/malromur2017/10hour.tsv', 'unpadded_num_frames', sort_ascending=False, 
+    #    out_index='./processed_data/malromur2017/production_indexes/10hour_byxlen.tsv')
+    #subset_by_n(1000, './processed_data/malromur2017/index.tsv', './processed_data/malromur2017/production_indexes/1000_eval.tsv')
+    sort_index('./processed_data/malromur2017/production_indexes/1000_eval.tsv', 's_len', sort_ascending=False, 
+        out_index='./processed_data/malromur2017/production_indexes/1000eval_byylen.tsv')

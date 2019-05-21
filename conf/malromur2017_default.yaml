@@ -9,6 +9,20 @@ asr_model:
     tf_rate: 0.9                                     # Teacher forcing rate (LAS approved)
     feature_dim: 40                                  # Dimensionality of fbanks (has to be same as used in prepro) (LAS approved)
   decode_lm_weight: 0.5 
+  
+  train_index: './processed_data/malromur2017/production_indexes/2_5hour_byxlen.tsv'
+  eval_index: './processed_data/malromur2017/production_indexes/eval_index_byxlen.tsv'
+  test_index: './processed_data/malromur2017/production_indexes/100_by_xlen.tsv'
+  train_batch_size: 32
+  eval_batch_size: 32
+  test_batch_size: 1
+  total_steps: 150000
+  eval_step: 3000
+
+  decode_beam_size: 3
+  decode_jobs: 8
+  max_decode_step_ratio: 0.25
+  decode_lm_weight: 0.5
 
 speech_autoencoder:
   optimizer:
@@ -45,30 +59,31 @@ rnn_lm:
     type: 'Adam'                                   # Optimizer used for training
     learning_rate: 0.001                           # Learning rate for optimizer
   model_para:           
-    emb_dim: 650                                   # Word embedding dimensionality
-    hidden_dim: 650                                # Hidden dimensionality of RNN unit
+    emb_dim: 128                                   # Word embedding dimensionality
+    hidden_dim: 128                                # Hidden dimensionality of RNN unit
     num_layers: 2                                  # Number of RNN layers
-    dropout_rate: 0.5                              # Dropout rate used in RNNLM
+    dropout_rate: 0.1                              # Dropout rate used in RNNLM
   
-solver:
-  # Paths to prepro indexes
-  train_index_path_byxlen: './processed_data/malromur2017/production_indexes/train_index_byxlen.tsv'
-  train_index_path_byylen: './processed_data/malromur2017/production_indexes/train_index_byylen.tsv'
-  eval_index_path_byxlen: './processed_data/malromur2017/production_indexes/eval_index_byxlen.tsv'
-  eval_index_path_byylen: './processed_data/malromur2017/production_indexes/eval_index_byylen.tsv'
-  test_index_path_byxlen: './processed_data/malromur2017/production_indexes/eval_index_byxlen.tsv'
-  test_index_path_byylen: './processed_data/malromur2017/production_indexes/eval_index_byylen.tsv'
-
-  n_jobs: 8                                        # Number of subprocesses used for Dataloader (LAS neutral)
-
-  decode_beam_size: 20
-  decode_jobs: 1
-  max_decode_step_ratio: 0.25
-  decode_lm_weight: 0.5
-
-  batch_size: 32                                   # training batch size (LAS approved)
+  train_index: './processed_data/malromur2017/production_indexes/train_index_byylen.tsv'
+  eval_index: './processed_data/malromur2017/production_indexes/eval_index_byylen.tsv'
+  train_batch_size: 32
   eval_batch_size: 32
-  test_batch_size: 1
+  total_steps: 300000
+  eval_step: 1000
 
-  total_steps: 3000000                              # total steps for training (LAS neutral)
-  eval_step: 3000                                  # interval of validation steps (not mentioned in LAS)
+char_lm:
+  train_batch_size: 128
+  chunk_size: 200
+  train_index: './processed_data/risamalromur/train.txt'
+  eval_index: './processed_data/risamalromur/eval.txt'
+  n_layers: 2
+  hidden_size: 128
+  n_epochs: 4
+  eval_step: 200
+  tf_rate: 0.9                                     # Teacher forcing rate (LAS approved)
+
+  optimizer:
+    learning_rate: 0.01
+
+solver:
+  n_jobs: 8                                        # Number of subprocesses used for Dataloader (LAS neutral)

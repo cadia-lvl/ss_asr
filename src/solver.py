@@ -3,11 +3,15 @@ import itertools
 import math
 import os
 import json
+import time
+import random
 
 import numpy as np
 import torch
 import torch.nn.functional as F
 import torch.nn as nn
+from torch.distributions.categorical import Categorical
+
 
 import matplotlib.pyplot as plt
 
@@ -17,18 +21,24 @@ from tqdm import tqdm
 
 from asr import ASR
 from dataset import load_dataset, prepare_x, prepare_y
+from text_dataset import LMDataset, dataload
+#from simple_rnndataset import LMDataset
 from lm import LM
 from postprocess import calc_acc, calc_err, draw_att
+from preprocess import SOS_TKN
 
 from text_autoencoder import TextAutoEncoder
 from speech_autoencoder import SpeechAutoEncoder
 from discriminator import Discriminator
+from charlm import CharLM
+
 
 # Additional Inference Timesteps to run during validation 
 # (to calculate CER)
 VAL_STEP = 30 
 # steps for debugging info.
 TRAIN_WER_STEP = 250
+LOGGING_STEP = 100
 GRAD_CLIP = 5
 
 class Solver:
@@ -48,7 +58,7 @@ class Solver:
             self.paras.gpu = False
 
         # e.g. ./runs/experiment_2
-        self.logdir = os.path.join(self.paras.logdir, self.paras.name)
+        self.logdir = os.path.join(self.paras.logdir, self.paras.name, self.module_id)
         self.log = SummaryWriter(self.logdir)
 
         # /result (by default)
@@ -60,11 +70,12 @@ class Solver:
             os.makedirs(self.ckpdir)
 
         self.ckppath = os.path.join(self.ckpdir, self.module_id+'.cpt')
+        self.best_ckppath = os.path.join(self.ckpdir, self.module_id+'_best.cpt')
         self.tracker_path = os.path.join(self.ckpdir, 'tracker.json')
 
         self.step, self.best_val_loss = self.get_globals()
 
-        self.verbose('Model {} loaded at step {} with best metric {:.3f}'
+        self.verbose('Model {} loaded at step {} with best logged loss {:.3f}'
             .format(self.module_id, self.step, self.best_val_loss))
 
     def verbose(self, msg, progress=False):
@@ -73,11 +84,7 @@ class Solver:
         if progress:
             msg += '                              '
         else:
-<<<<<<< HEAD
-            msg = '[INFO ({})] '.format(self.module_id) + msg
-=======
-            msg = '[INFO ({})]'.format(self.module_id) + msg
->>>>>>> Local changes
+            msg = '[INFO ({})] '.format(self.module_id) + str(msg)
 
         if self.paras.verbose:
             print(msg, end=end)
@@ -104,18 +111,24 @@ class Solver:
         if os.path.isfile(self.tracker_path):
             data = json.load(open(self.tracker_path, 'r'))
             if self.module_id in data and os.path.isfile(self.ckppath):
-                return data[self.module_id]['step'], data[self.module_id]['loss']
+                return data[self.module_id]['log']['step'], data[self.module_id]['log']['loss']
         return 0, 10000
 
-    def set_globals(self, step, loss):
+    def set_globals(self, step, loss, key):
+        '''
+        key is either "log" or "best"
+        '''
         if not os.path.isfile(self.tracker_path):
             data = {}
         else:
             data = json.load(open(self.tracker_path, 'r'))
-        data[self.module_id] = {}
-        data[self.module_id]['step'] = step
+        
+        if self.module_id not in data:
+            data[self.module_id] = {"log":{}, "best":{}}
+        
+        data[self.module_id][key]['step'] = step
         # actually is error in case of LAS and perplexity for LM, not loss
-        data[self.module_id]['loss'] = loss
+        data[self.module_id][key]['loss'] = loss
 
         json.dump(data, open(self.tracker_path, 'w'))
 
@@ -144,8 +157,182 @@ class Solver:
         if os.path.isfile(ckp_path):
             self.verbose('Loading a pretrained model from {}'.format(ckp_path))
             model.load_state_dict(torch.load(ckp_path))
-
+        else:
+            self.verbose('No model found at {}. A new model will be created'.format(ckp_path))
         return model.to(self.device)
+
+class CHARLMTrainer(Solver):
+    def __init__(self, config, paras):
+        super(CHARLMTrainer, self).__init__(config, paras, 'char_lm')
+
+    def load_data(self):
+        self.valid_step = self.config['char_lm']['eval_step']
+        self.chunk_size = self.config['char_lm']['chunk_size']
+        self.batch_size = self.config['char_lm']['train_batch_size']
+
+        self.ds, self.train_dl = dataload(self.config['char_lm']['train_index'], 
+            self.chunk_size, self.batch_size, shuffle=True)
+
+        '''
+        _, self.eval_dl = dataload(self.config['char_lm']['eval_index'], 
+            self.chunk_size, self.batch_size, shuffle=True)
+        '''
+
+        self.num_chars = self.ds.get_num_chars()
+        self.logging_step = 1
+        self.tf_rate = self.config['char_lm']['tf_rate']
+
+    def set_model(self):
+        self.loss_metric = nn.CrossEntropyLoss(reduction='none').to(self.device)
+
+        self.lm = self.setup_module(CharLM, self.ckppath, self.num_chars,            
+            self.config['char_lm']['hidden_size'])
+        self.tf_rate = self.config['char_lm']['tf_rate']
+
+        self.optim = torch.optim.Adam(self.lm.parameters(), 
+            lr=self.config['char_lm']['optimizer']['learning_rate'])
+    
+    def exec(self):
+        self.verbose('Training set total '+str(int(len(self.ds)/self.chunk_size))+' batches.')
+        epoch = 0
+        while epoch < self.config['char_lm']['n_epochs']:
+            for b_ind, ((s_x, s_y), (x, y)) in enumerate(self.train_dl):
+                # x, y shapes: [batch_size, chunk_size]
+                self.verbose('Global step: {}'.format(self.step), progress=True)
+                self.lm.zero_grad()
+                loss = 0
+                last_char = torch.zeros((self.batch_size)).to(self.device) # <SOS> for whole batch
+                # get inital hidden states
+                (h_1, h_2) = self.lm.init_hidden(self.batch_size, self.device)
+                # step over the whole sequence
+                for i in range(self.chunk_size):
+                    # out.shape = [batch_size, char_dim]
+                    out, (h_1, h_2) = self.lm(last_char, h_1, h_2)
+                    label = y[:, i] # [batch size]
+                    loss += self.loss_metric(out, label.long())
+                    
+                    if random.random() <= self.tf_rate:
+                        last_char = label.to(self.device)
+                    else:
+                        # sample from previous prediction
+                        last_char = Categorical(F.softmax(out, dim=-1)).sample() # [bs]
+                        last_char = last_char.to(self.device)
+                
+                # take the mean over samples in batch
+                loss = torch.mean(loss)
+                loss.backward()
+                self.optim.step()
+
+                if self.step % self.logging_step == 0:
+                    self.log_scalar('train_loss', 
+                        loss.item() / self.chunk_size)
+
+                if self.step % self.valid_step == 0:
+                    #self.valid()
+                    generated = self.generate()
+                    self.log_text('text_generate', generated)
+                    self.set_globals(self.step, loss.item() / self.chunk_size, 'log')
+                    torch.save(self.lm.state_dict(), self.ckppath)
+
+                self.step += 1
+
+            self.verbose('Epoch {} finished'.format(epoch))
+            epoch += 1
+    
+    def generate(self, length=100, temp=0.8, start=SOS_TKN):
+        '''
+        Input arguments:
+        * length (int): The number of characters to produce
+        * temp (float): Low value -> more correct , high value -> more varying
+        * start (str): The first characters fed as input to 
+        the network. If not set, the SOS token is used.
+
+        Use of temp: For the model probabilites, p, we define a mapping f, which
+        gives new probabilities:
+        
+        f(p)_i = p_i ^ (1 / t) / sum[j] p_j ^ (1 / t)
+
+        where t is the chosen temperature. If:
+        * t = 1 : then we use the original probability distribution
+        * t < 1 : Probability shifted towards higher values -> more selective
+        * t > 1 : Probabilities become more alike -> more varying
+        '''
+        h_1, h_2 = self.lm.init_hidden(1, self.device)
+        x = self.ds.s2l(start).to(self.device) # [seq]
+        #x = x.view(1, x.shape[0], x.shape[1])
+        out_string = start
+
+        for i in range(x.shape[0] - 1):
+            out, (h_1, h_2) = self.lm(x[i], h_1, h_2)
+        
+        # The last character of 'start' is the first input
+        # for the rest of predicting, shape: [1, 1, features]
+        x = x[-1].view(-1)
+        for i in range(length):
+            out, (h_1, h_2) = self.lm(x, h_1, h_2)
+            # first, create a probability distribution over characters
+            # using softmax
+            dist = torch.softmax(out.view(-1), dim=-1)
+            # then we apply the mapping using temperature, taking the pow
+            # is ok here, since all values in dist are 0+.
+            dist = dist**(1/temp)
+            dist = dist / torch.sum(dist, dim=-1)
+            # finally, we sample from this multinomial distribution
+            predict = torch.multinomial(dist, 1)[0]
+            predict_str = self.ds.idx2char[predict.item()]
+            # add to the string
+            out_string += predict_str
+            # set the next input
+            x = self.ds.s2l(predict_str).to(self.device)
+
+        self.verbose('Finished generating strings')
+        return out_string
+
+    def valid(self):
+        '''
+        Perform validation step
+        
+        BUG: For some weird reason, slurm hangs when I enable this validation
+        step. Therefore we just run the generate to get an idea of the quality
+        of the model
+        '''
+
+        self.lm.eval()
+        self.verbose('Performing validation')
+
+        total_loss = 0.0
+        n_batches = 0
+        while n_batches < 50:
+            for b_ind, ((s_x, s_y), (x_oh, y_oh), (x_l, y_l)) in enumerate(self.eval_dl):
+                loss = 0
+                # get inital hidden states
+                (h_1, h_2) = self.lm.init_hidden(self.batch_size, self.device)
+                # step over the whole sequence
+                for i in range(self.chunk_size):
+                    # out.shape = [batch_size, char_dim]
+                    out, (h_1, h_2) = self.lm(x_oh[:, i, :], h_1, h_2)
+                    labels = y_l[:, i].view(-1)
+                    loss += self.loss_metric(out, labels.long())
+                # take the mean over samples in batch
+                
+                loss = torch.mean(loss)
+                total_loss += loss.detach() / self.chunk_size
+                n_batches +=1 
+
+        avg_loss = total_loss / n_batches
+
+        self.log_scalar('eval_loss', avg_loss)
+
+        if avg_loss < self.best_val_loss:
+            self.best_val_loss = avg_loss.item()
+            self.verbose('Best validation loss for RNNLM : {:.4f} @ global step {}'
+                .format(self.best_val_loss, self.step))
+
+            self.set_globals(self.step, self.best_val_loss, "best")
+            torch.save(self.lm.state_dict(), self.best_ckppath)
+        # generate and log text
+        self.generate()
+        self.lm.train()
 
 class ASRTrainer(Solver):
     ''' Handler for complete training progress'''
@@ -237,9 +424,13 @@ class ASRTrainer(Solver):
                 self.grad_clip(self.asr_model.parameters(), self.optim)
                 
                 # Logger
-                self.log_scalar('train_loss', loss)
-                self.log_scalar('train_acc', calc_acc(prediction,label))
-                
+                if self.step % LOGGING_STEP == 0:
+                    self.log_scalar('train_loss', loss)
+                    self.log_scalar('train_acc', calc_acc(prediction,label))
+                    # also, save the current model
+                    self.set_globals(self.step, loss.item(), "log")
+                    torch.save(self.asr_model.state_dict(), self.ckppath)
+
                 if self.step % TRAIN_WER_STEP == 0:
                     self.log_scalar('train_error', 
                         calc_err(prediction, label, mapper=self.mapper))
@@ -250,6 +441,7 @@ class ASRTrainer(Solver):
                     self.valid()
 
                 self.step += 1 
+
                 if self.step > self.max_step: 
                     self.verbose('Stopping after reaching maximum training steps')
                     break
@@ -259,8 +451,8 @@ class ASRTrainer(Solver):
         self.asr_model.eval()
         
         # Init stats
-        loss, att, acc, err = 0.0, 0.0, 0.0, 0.0
-        val_len = 0    
+        total_loss, total_acc, total_err = 0.0, 0.0, 0.0
+        num_batches = 0    
         predictions, labels = [], []
         
         # Perform validation
@@ -282,16 +474,16 @@ class ASRTrainer(Solver):
             # Compute attention loss & get decoding results
             label = y[:,1:ans_len+1].contiguous()
            
-            seq_loss = self.seq_loss(prediction[:,:ans_len,:]
+            loss = self.seq_loss(prediction[:,:ans_len,:]
                 .contiguous().view(-1,prediction.shape[-1]), label.view(-1))
 
             # Sum each uttr and devide by length
-            seq_loss = torch.sum(seq_loss.view(x.shape[0],-1),dim=-1)\
+            loss = torch.sum(loss.view(x.shape[0],-1),dim=-1)\
                 /torch.sum(y!=0,dim=-1).to(device=self.device, dtype=torch.float32)
             # Mean by batch
-            seq_loss = torch.mean(seq_loss)
+            loss = torch.mean(loss)
             
-            loss += seq_loss.detach()*int(x.shape[0])
+            total_loss += loss.detach()
             
             mapped_prediction = [self.mapper.translate(p) for p in 
                 np.argmax(prediction.cpu().detach(), axis=-1)]
@@ -300,24 +492,26 @@ class ASRTrainer(Solver):
             predictions.append(mapped_prediction)
             labels.append(mapped_label)
             
-            acc += calc_acc(prediction,label)*int(x.shape[0])
-            err += calc_err(prediction,label,mapper=self.mapper)*int(x.shape[0])
+            total_acc += calc_acc(prediction,label)
+            total_err += calc_err(prediction,label,mapper=self.mapper)
             
-            val_len += int(x.shape[0])
+            num_batches += 1 
 
         # Logger
-        self.log_scalar('eval_loss', loss/val_len)
-                     
+        avg_loss = total_loss / num_batches
+        avg_err = total_err / num_batches
+        avg_acc = total_acc / num_batches
+
+        self.log_scalar('eval_loss', avg_loss)
+        self.log_scalar('eval_error', avg_err)
+        self.log_scalar('eval_acc', avg_acc)
+
         # Plot attention map to log for the last batch in the validation
         # dataset.
         val_hyp = [self.mapper.translate(p) for p in 
             np.argmax(prediction.cpu().detach(), axis=-1)]
         val_txt = [self.mapper.translate(l) for l in label.cpu()]
         val_attmaps = draw_att(att_map, np.argmax(prediction.cpu().detach(), axis=-1))
-        
-        # Record loss
-        self.log_scalar('eval_error', err/val_len)
-        self.log_scalar('eval_acc',  acc/val_len)
         
         for idx, attmap in enumerate(val_attmaps):
             #plt.imshow(attmap)
@@ -327,14 +521,14 @@ class ASRTrainer(Solver):
             self.log_text('eval_txt_'+str(idx),val_txt[idx])
  
         # Save model by val er.
-        if err/val_len  < self.best_val_loss:
-            self.best_val_loss = err/val_len
+        if avg_loss  < self.best_val_loss:
+            self.best_val_loss = avg_loss.item()
             self.verbose('Best validation loss for ASR : {:.4f} @ global step {}'
                 .format(self.best_val_loss, self.step))
 
-            self.set_globals(self.step, self.best_val_loss)
-         
-            torch.save(self.asr_model.state_dict(), self.ckppath)
+            self.set_globals(self.step, self.best_val_loss, "best")
+
+            torch.save(self.asr_model.state_dict(), self.best_ckppath)
             
             # Save hyps.
             with open(os.path.join(self.ckpdir, 'best_hyp.txt'), 'w') as f:
@@ -346,43 +540,38 @@ class ASRTrainer(Solver):
 class ASRTester(Solver):
     ''' Handler for complete inference progress'''
     def __init__(self, config, paras):
-        super(ASRTester, self).__init__(config, paras, 'asr_test')
+        super(ASRTester, self).__init__(config, paras, 'asr')
         
         self.decode_file = "_".join(
-            ['decode','beam',str(self.config['solver']['decode_beam_size']),
-            'len',str(self.config['solver']['max_decode_step_ratio'])])
+            ['decode','beam',str(self.config['asr_model']['decode_beam_size']),
+            'len',str(self.config['asr_model']['max_decode_step_ratio'])])
 
     def load_data(self):
         (self.mapper, _ ,self.test_set) = load_dataset(
-            self.config['solver']['test_index_path_byxlen'],
-            batch_size=self.config['solver']['test_batch_size'],
+            self.config['asr_model']['test_index'],
+            batch_size=self.config['asr_model']['test_batch_size'],
             use_gpu=self.paras.gpu)
         
-        (_, _, self.eval_set) = load_dataset(
-            self.config['solver']['eval_index_path_byxlen'], 
-            batch_size=self.config['solver']['eval_batch_size'],            
-            use_gpu=self.paras.gpu)
-
     def set_model(self):
         ''' Load saved ASR'''
         self.asr_model = self.setup_module(ASR, self.ckppath, self.mapper.get_dim(),
             **self.config['asr_model']['model_para'])
         # move origin model to cpu, clone it to GPU for each thread
         self.asr_model.eval()
-        self.asr_model = self.asr_model.to('cpu')
+        #self.asr_model = self.asr_model.to('cpu')
 
-        self.rnnlm = self.setup_module(LM, self.ckppath, self.mapper.get_dim(), 
+        self.rnnlm = self.setup_module(LM, os.path.join(self.ckpdir, 'rnn_lm.cpt'), self.mapper.get_dim(), 
             **self.config['rnn_lm']['model_para'])
-
-        self.lm_weight = self.config['solver']['decode_lm_weight']
-        self.decode_beam_size = self.config['solver']['decode_beam_size']
-        self.njobs = self.config['solver']['decode_jobs']
-        self.decode_step_ratio = self.config['solver']['max_decode_step_ratio']
-
-
-        self.decode_file += '_lm{:}'.format(self.config['solver']['decode_lm_weight'])
         
+        self.rnnlm.eval()
 
+        self.lm_weight = self.config['asr_model']['decode_lm_weight']
+        self.decode_beam_size = self.config['asr_model']['decode_beam_size']
+        self.njobs = self.config['asr_model']['decode_jobs']
+        self.decode_step_ratio = self.config['asr_model']['max_decode_step_ratio']
+
+        self.decode_file += '_lm{:}'.format(self.config['asr_model']['decode_lm_weight'])
+        
     def exec(self):
         '''Perform inference step with beam search decoding.'''
         self.verbose('Start decoding with beam search, beam size: {}'
@@ -390,16 +579,48 @@ class ASRTester(Solver):
         self.verbose('Number of utts to decode : {}, decoding with {} threads.'
             .format(len(self.test_set),self.njobs))
         
+        for b_ind, (x, y) in enumerate(self.test_set):
+            x, x_len = prepare_x(x, self.device)
+            y, _ = prepare_y(y, self.device)
+            self.asr_model.decode(x, x_len, self.rnnlm, self.mapper)
+        '''
         _ = Parallel(n_jobs=self.njobs)(
-            delayed(self.beam_decode)(x[0],y[0].tolist()[0]) 
-            for x, y in tqdm(self.test_set))
-        
+            delayed(self.beam_decode)(prepare_x(x)[0][0], prepare_y(y)[0][0].tolist()[0]) 
+            for x,y in tqdm(self.test_set))
+        '''
+        '''
+        b_ind, (x, y) = next(enumerate(self.test_set))
+        print(x.shape)
+        x, _ = prepare_x(x)
+        y, _ = prepare_y(y)
+        print(y.shape)
+        y = y.view(1, -1)
+        print(y.shape)
+        self.beam_decode(x, y)
+        '''
+        '''
+        for b_ind, (x, y) in enumerate(self.test_set):
+            print(b_ind)
+            (x, x_lens) = prepare_x(x, device=self.device)
+            print('now here')
+            (y, y_lens) = prepare_y(y, device=self.device)
+
+            print("X shape: {}, Y shape: {}".format(x.shape, y.shape))
+            
+            y_list = y.tolist()[0]
+            print("Length of y : {}".format(len(y_list)))
+
+            print("STarting to beam decode")
+            self.beam_decode(x, y_list)
+            print('Done beam decoding')
+        '''
+        '''
         self.verbose('Decode done, best results at {}.'.format(
             str(os.path.join(self.ckpdir,self.decode_file+'.txt'))))
         
         self.verbose('Top {} results at {}.'.format(
             self.decode_beam_size, str(os.path.join(self.ckpdir,self.decode_file+'_nbest.txt'))))
-        
+        '''
     def write_hyp(self, hyps, y):
         '''Record decoding results'''
         gt = self.mapper.translate(y,return_string=True)
@@ -412,25 +633,28 @@ class ASRTester(Solver):
             for hyp in hyps:
                 best_hyp = self.mapper.translate(hyp.outIndex, return_string=True)
                 f.write(gt+'\t'+best_hyp+'\n')   
+    
 
     def beam_decode(self, x, y):
+        print("In beam decode")
         '''Perform beam decoding with end-to-end ASR'''
         # Prepare data
         x = x.to(device = self.device,dtype=torch.float32)
         state_len = torch.sum(torch.sum(x.cpu(),dim=-1)!=0,dim=-1)
         state_len = [int(sl) for sl in state_len]
-
+        print(state_len)
         # Forward
         with torch.no_grad():
             max_decode_step =  int(np.ceil(state_len[0]*self.decode_step_ratio))
             model = copy.deepcopy(self.asr_model).to(self.device)
             hyps = model.beam_decode(x, max_decode_step, 
                 state_len, self.decode_beam_size, self.rnnlm, self.lm_weight)
+        '''
         del model
         
         self.write_hyp(hyps,y)
         del hyps
-        
+        '''
         return 1
 
 class SAETrainer(Solver):
@@ -504,10 +728,6 @@ class SAETrainer(Solver):
             x = x[:, :batch_t, :]
             enc_final = torch.zeros([enc_out.shape[0], batch_t, enc_out.shape[2]]).to(self.device)
             enc_final[:, :enc_out.shape[1], :] = enc_out
-<<<<<<< HEAD
-
-=======
->>>>>>> Local changes
             loss = self.loss_metric(enc_final, x)
 
             # Divide each by length of x and sum, then take the average over the
@@ -946,13 +1166,16 @@ class AdvTrainer(Solver):
 
 class LMTrainer(Solver):
     ''' Trainer for RNN-LM only'''
+    '''
+    BUG: for some reason, this Trainer never achieved good validation results,
+    and in fact, validation error kept increasing during training.
+    '''
     def __init__(self, config, paras):
         super(LMTrainer, self).__init__(config, paras, 'rnn_lm')
 
     def load_data(self):
         ''' 
         Load training / evaluation sets
-        
         Data must be sorted by length of y
         '''
         self.valid_step = self.config['rnn_lm']['eval_step']
@@ -991,66 +1214,56 @@ class LMTrainer(Solver):
                 self.verbose('Global step: {}'.format(self.step), progress=True)
 
                 (y, y_lens) = prepare_y(y, device=self.device)
-                # BUG: we remove 1 from y_lens (see prepare_y thing)
+                # we remove <eos> while predicting so lengths are cut one short
                 y_lens = [l-1 for l in y_lens]                
 
                 self.optim.zero_grad()
-                
                 _, prob = self.rnnlm(y[:,:-1], y_lens)
-                
                 loss = F.cross_entropy(prob.view(-1,prob.shape[-1]), 
                     y[:,1:].contiguous().view(-1), ignore_index=0)
                 loss.backward()
                 self.optim.step()
 
                 # logger
-                ppx = torch.exp(loss.cpu()).item()
-                self.log_scalar('train_perplexity', ppx)
+                self.log_scalar('train_loss',  loss)
 
                 # Next step
                 self.step += 1
-
                 if self.step % self.valid_step ==0:
                     self.valid()
-
                 if self.step > self.max_step:
                     break
 
     def valid(self):
         self.rnnlm.eval()
-
-        print_loss = 0.0
-        eval_size = 0 
+        total_loss = 0.0
+        num_samples = 0 
 
         for cur_b,y in enumerate(self.eval_set):
             self.verbose('Validation step - {} ( {} / {} )'.format(
                 self.step, cur_b, len(self.eval_set)), progress=True)
             
             (y, y_lens) = prepare_y(y, device=self.device)
-            # same issue here as in self.exec()
+            # we remove <eos> while predicting so lengths are cut one short
             y_lens = [l-1 for l in y_lens]
 
             _, prob = self.rnnlm(y[:,:-1], y_lens)
             loss = F.cross_entropy(prob.view(-1,prob.shape[-1]), 
                 y[:,1:].contiguous().view(-1), ignore_index=0)
             
-            print_loss += loss.clone().detach() * y.shape[0]
-            eval_size += y.shape[0]
+            total_loss  += loss.clone().detach()
+            num_samples += y.shape[0]
 
-        print_loss /= eval_size
-        eval_ppx = torch.exp(print_loss).cpu().item()
-        self.log_scalar('eval_perplexity', eval_ppx)
+        avg_loss = total_loss.item()/num_samples
+        self.log_scalar('eval_loss', avg_loss)
         
         # Store model with the best perplexity
-        if eval_ppx < self.best_val_loss:
-            self.best_val_loss  = eval_ppx
-            self.verbose('Best validation ppx : {:.4f} @ step {}'
+        if avg_loss < self.best_val_loss:
+            self.best_val_loss  = avg_loss
+            self.verbose('Best validation loss : {:.4f} @ step {}'
                 .format(self.best_val_loss, self.step))
-
             self.set_globals(self.step, self.best_val_loss)
-
             torch.save(self.rnnlm.state_dict(), self.ckppath)
-
         self.rnnlm.train()
 
 '''

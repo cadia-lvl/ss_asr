@@ -2,6 +2,8 @@ env/
 data/
 log/
 result/
+old_results/
+old_runs/
 runs/
 processed_data/
 backup_logs/

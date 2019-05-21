@@ -169,7 +169,6 @@ class ASRDataset(Dataset):
         Fetches the text from the given index, maps
         to character indexes and returns as an ndarray
         '''
-        encoded = [self.char2idx(c) for c in text]
         return np.array([self.char2idx(c) for c in text])
 
     def decode(self, inds) -> str:
@@ -251,6 +250,16 @@ class Mapper():
 
         new_seq = ''.join(new_seq).replace(SOS_TKN,'').replace(EOS_TKN,'')
         return new_seq
+
+    def ind_to_char(self, ind):
+        '''
+        Input arguments: 
+        * ind (int): Mapping value for some character
+        '''
+        return self.r_mapping[ind]
+
+    def char_to_ind(self, char):
+        return self.mapping[char]
 
 def load_dataset(path: str, batch_size:int=1, n_jobs:int=8, text_only:bool=False, 
     use_gpu:bool=False, sort_key='', sort_ascending=True, drop_rate:float=0.0):
