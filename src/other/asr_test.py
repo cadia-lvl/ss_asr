@@ -50,12 +50,12 @@ def asr_test(asr_cpt: str, index_path: str, conf_path: str):
     
     print(state_len)
     for i in range(x.shape[0]):
-        label = y[i, :].view(-1)
+        label = y[i, :]
         print("Current label: ", label)
         print("Label mapped: ", mapper.translate(label))
     
 
-        pred = prediction[i, :, :].view(prediction.shape[1], prediction.shape[2])
+        pred = prediction[i, :, :]
         pred = np.argmax(pred.cpu().detach(), axis=-1)
         att_len = len(trim_eos(pred))
         print("Prediction shape: ", pred.shape)

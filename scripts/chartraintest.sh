@@ -6,5 +6,5 @@
 
 ~/envs/LAS/bin/python3 src/train.py \
     --type='char_lm'\
-    --name='char_lm_final_adadelta'\
+    --name='testchar'\
     --config='./conf/malromur2017_default.yaml'

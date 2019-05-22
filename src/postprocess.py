@@ -130,7 +130,7 @@ def draw_att(att_maps, hyps):
     '''
     attmaps = []
     for i in range(att_maps.shape[0]):
-        att_i = att_maps[i, :, :].view(att_maps.shape[1], att_maps.shape[2])
+        att_i = att_maps[i, :, :]
         att_len = len(trim_eos(hyps[i]))
         attmaps.append(torch.stack([att_i,att_i,att_i],dim=0)[:, :att_len, :])
     return attmaps

@@ -9,15 +9,15 @@ import numpy as np
 import torch
 import yaml
 
-from solver import (AdvTrainer, ASRTrainer, LMTrainer, SAETrainer,
-                    TAETrainer, ASRTester, CHARLMTrainer)
+from solver import (ADVTrainer, ASRTrainer, SAETrainer,
+                    TAETrainer, CHARLMTrainer)
 
 torch.backends.cudnn.deterministic = True
 
 # Arguments
 parser = argparse.ArgumentParser(description='Training E2E asr.')
 parser.add_argument('--type', type=str, 
-    help='asr | rnn_lm | tae | sae | adv | test | char_lm',
+    help='asr | tae | sae | adv | test | char_lm',
     default='asr')
 parser.add_argument('--name', type=str, help='Name for logging.', 
     default='newtest')
@@ -35,11 +35,8 @@ parser.add_argument('--verbose', default=True,
 
 paras = parser.parse_args()
 
-# note :  'rnn_lm': LMTrainer, was removed since validation error
-# never got better. Use CHARLMTrainer instead.
-
 type_map = {'asr': ASRTrainer, 'tae': TAETrainer, 
-    'sae': SAETrainer, 'adv': AdvTrainer, 'test': ASRTester, 'char_lm': CHARLMTrainer}
+    'sae': SAETrainer, 'adv': ADVTrainer, 'char_lm': CHARLMTrainer}
 
 config = yaml.load(open(paras.config,'r'), Loader=yaml.FullLoader)
 
@@ -52,3 +49,4 @@ trainer = type_map[paras.type](config,paras)
 trainer.load_data()
 trainer.set_model()
 trainer.exec()
+trainer.close()

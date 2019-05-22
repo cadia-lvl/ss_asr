@@ -2,14 +2,10 @@ import random
 import torch
 from torch.utils.data import DataLoader, Dataset
 from preprocess import ALL_CHARS, EOS_TKN, SOS_TKN, TOKENS
-import time
 
 class LMDataset(Dataset):
     def __init__(self, filename, chunk_size, chars:str=TOKENS+ALL_CHARS):
-        start = time.time()
-        print('Opeing file')
         self.file = open(filename).read()
-        print('Finished, took: {}'.format(time.time() - start))
         self.len_file = len(self.file)
         self.chunk_size = chunk_size
         self.chars = chars

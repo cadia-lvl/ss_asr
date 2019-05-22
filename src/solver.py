@@ -5,41 +5,37 @@ import os
 import json
 import time
 import random
+import sys
 
 import numpy as np
 import torch
 import torch.nn.functional as F
 import torch.nn as nn
 from torch.distributions.categorical import Categorical
-
+from librosa.display import specshow
 
 import matplotlib.pyplot as plt
-
 from joblib import Parallel, delayed
-from tensorboardX import SummaryWriter
 from tqdm import tqdm
 
+# Import modules
 from asr import ASR
-from dataset import load_dataset, prepare_x, prepare_y
-from text_dataset import LMDataset, dataload
-#from simple_rnndataset import LMDataset
-from lm import LM
-from postprocess import calc_acc, calc_err, draw_att
-from preprocess import SOS_TKN
-
 from text_autoencoder import TextAutoEncoder
 from speech_autoencoder import SpeechAutoEncoder
 from discriminator import Discriminator
 from charlm import CharLM
 
+# Data, processing and tracking imports
+from TrackerHandler import TrackerHandler
+from LogHandler import LogHandler
+from dataset import load_dataset, prepare_x, prepare_y
+from text_dataset import LMDataset, dataload
+from postprocess import calc_acc, calc_err, draw_att
+from preprocess import SOS_TKN
+
 
 # Additional Inference Timesteps to run during validation 
 # (to calculate CER)
-VAL_STEP = 30 
-# steps for debugging info.
-TRAIN_WER_STEP = 250
-LOGGING_STEP = 100
-GRAD_CLIP = 5
 
 class Solver:
     ''' Super class Solver for all kinds of tasks'''
@@ -57,26 +53,50 @@ class Solver:
             self.verbose("A cuda device was not available.")
             self.paras.gpu = False
 
-        # e.g. ./runs/experiment_2
-        self.logdir = os.path.join(self.paras.logdir, self.paras.name, self.module_id)
-        self.log = SummaryWriter(self.logdir)
-
-        # /result (by default)
+        # Create directories and files, if needed.
         if not os.path.exists(paras.ckpdir):
             os.makedirs(paras.ckpdir)
-        # /result/<name>/
         self.ckpdir = os.path.join(paras.ckpdir,self.paras.name)
         if not os.path.exists(self.ckpdir):
             os.makedirs(self.ckpdir)
 
+        # setup tracker and logger        
+        self.tr = TrackerHandler(os.path.join(self.ckpdir, 'tracker.json'),
+            self.module_id)
+        self.lg = LogHandler(
+            os.path.join(self.paras.logdir, self.paras.name, self.module_id),
+            self.module_id)
+
         self.ckppath = os.path.join(self.ckpdir, self.module_id+'.cpt')
         self.best_ckppath = os.path.join(self.ckpdir, self.module_id+'_best.cpt')
-        self.tracker_path = os.path.join(self.ckpdir, 'tracker.json')
 
-        self.step, self.best_val_loss = self.get_globals()
+        # default values for some class variables
+        self.valid_step = self.set_if_exists('valid_step', 500)
+        self.logging_step = self.set_if_exists('logging_step', 250)
+        self.save_step = self.set_if_exists('save_step', 1000)
+        self.n_epochs = self.set_if_exists('n_epochs', 5)
+        self.train_batch_size = self.set_if_exists('train_batch_size', 32)
+        self.valid_batch_size = self.set_if_exists('valid_batch_size', 32)
+        self.test_batch_size = self.set_if_exists('test_batch_size', 1)
 
-        self.verbose('Model {} loaded at step {} with best logged loss {:.3f}'
-            .format(self.module_id, self.step, self.best_val_loss))
+        self.verbose_summary()
+
+    def verbose_summary(self):
+        self.verbose("-------SUMMARY-------")
+        self.verbose("Current step : {}".format(self.tr.step))
+        self.verbose("Best metric value : {}".format(self.tr.get_best()))
+        self.verbose("Number of epochs: {}".format(self.n_epochs))
+        self.verbose("Steps: [Logging {}], [Saving {}], [Validation {}]".format(
+            self.logging_step, self.save_step, self.valid_step))
+        self.verbose("Batch sizes: [Train {}], [Validation{}], [Testing {}]".format(
+            self.train_batch_size, self.valid_batch_size, self.test_batch_size))
+        self.verbose("---------------------")
+
+    def set_if_exists(self, key, default):
+        if key in self.config[self.module_id]:
+            return self.config[self.module_id][key]
+        else: 
+            return default
 
     def verbose(self, msg, progress=False):
         ''' Verbose function for print information to stdout'''
@@ -88,54 +108,11 @@ class Solver:
 
         if self.paras.verbose:
             print(msg, end=end)
-
-    def log_scalar(self, key, val):
-        self.log.add_scalar('{}_{}'.format(self.module_id, key), val, self.step)
-
-    def log_text(self, key, val):
-        self.log.add_text('{}_{}'.format(self.module_id, key), val, self.step)
-
-    def log_image(self, key, val):
-        self.log.add_image('{}_{}'.format(self.module_id, key), val, self.step)
-
-    def get_globals(self):
-        '''
-        Returns (step, loss) where loss is the best loss
-        that has been achived by the associated model and
-        the global step when it was achieved. 
-
-        If no info is available in the tracker file and a checkpoint file is not
-        found then we return (0, 10_000)
-        '''
-
-        if os.path.isfile(self.tracker_path):
-            data = json.load(open(self.tracker_path, 'r'))
-            if self.module_id in data and os.path.isfile(self.ckppath):
-                return data[self.module_id]['log']['step'], data[self.module_id]['log']['loss']
-        return 0, 10000
-
-    def set_globals(self, step, loss, key):
-        '''
-        key is either "log" or "best"
-        '''
-        if not os.path.isfile(self.tracker_path):
-            data = {}
-        else:
-            data = json.load(open(self.tracker_path, 'r'))
-        
-        if self.module_id not in data:
-            data[self.module_id] = {"log":{}, "best":{}}
-        
-        data[self.module_id][key]['step'] = step
-        # actually is error in case of LAS and perplexity for LM, not loss
-        data[self.module_id][key]['loss'] = loss
-
-        json.dump(data, open(self.tracker_path, 'w'))
-
-    def grad_clip(self, params, optim, grad_clip=GRAD_CLIP):
-        grad_norm = nn.utils.clip_grad_norm_(params, GRAD_CLIP)
+    
+    def grad_clip(self, params, optim, grad_clip=5):
+        grad_norm = nn.utils.clip_grad_norm_(params, grad_clip)
         if math.isnan(grad_norm):
-            self.verbose('Error : grad norm is NaN @ step '+str(self.step))
+            self.verbose('Error : grad norm is NaN @ step '+str(self.tr.step))
         else:
             optim.step()
 
@@ -151,7 +128,6 @@ class Solver:
         * para: Any number of positional arguments passed to the module
         * model_para: Any number of keyword arguments passed to the module 
         '''
-
         model = module(*para, **model_para)
 
         if os.path.isfile(ckp_path):
@@ -160,50 +136,45 @@ class Solver:
         else:
             self.verbose('No model found at {}. A new model will be created'.format(ckp_path))
         return model.to(self.device)
-
+    
 class CHARLMTrainer(Solver):
     def __init__(self, config, paras):
         super(CHARLMTrainer, self).__init__(config, paras, 'char_lm')
 
     def load_data(self):
-        self.valid_step = self.config['char_lm']['eval_step']
         self.chunk_size = self.config['char_lm']['chunk_size']
-        self.batch_size = self.config['char_lm']['train_batch_size']
-
-        self.ds, self.train_dl = dataload(self.config['char_lm']['train_index'], 
-            self.chunk_size, self.batch_size, shuffle=True)
-
-        '''
-        _, self.eval_dl = dataload(self.config['char_lm']['eval_index'], 
-            self.chunk_size, self.batch_size, shuffle=True)
-        '''
-
-        self.num_chars = self.ds.get_num_chars()
-        self.logging_step = 1
         self.tf_rate = self.config['char_lm']['tf_rate']
+
+        # TODO: Use GPU is not used for this dataloader, check if we should
+        self.ds, self.train_set = dataload(self.config['char_lm']['train_index'], 
+            self.chunk_size, self.train_batch_size, shuffle=True)
 
     def set_model(self):
         self.loss_metric = nn.CrossEntropyLoss(reduction='none').to(self.device)
 
-        self.lm = self.setup_module(CharLM, self.ckppath, self.num_chars,            
+        self.lm = self.setup_module(CharLM, self.ckppath, self.ds.get_num_chars(),            
             self.config['char_lm']['hidden_size'])
-        self.tf_rate = self.config['char_lm']['tf_rate']
-
-        self.optim = torch.optim.Adam(self.lm.parameters(), 
-            lr=self.config['char_lm']['optimizer']['learning_rate'])
+        
+        # setup optimizer
+        self.optim = getattr(torch.optim,
+            self.config['char_lm']['optimizer']['type'])
+        self.optim = self.optim(self.lm.parameters(), 
+            lr=self.config['char_lm']['optimizer']['learning_rate'], eps=1e-8)
     
     def exec(self):
-        self.verbose('Training set total '+str(int(len(self.ds)/self.chunk_size))+' batches.')
+        self.verbose('Training set total {} batches.'.format(len(self.train_set)))
         epoch = 0
-        while epoch < self.config['char_lm']['n_epochs']:
-            for b_ind, ((s_x, s_y), (x, y)) in enumerate(self.train_dl):
+        while epoch < self.n_epochs:
+            self.verbose("Starting epoch {} out of {}".format(epoch+1, self.n_epochs))
+            for b_ind, ((s_x, s_y), (x, y)) in enumerate(self.train_set):
                 # x, y shapes: [batch_size, chunk_size]
-                self.verbose('Global step: {}'.format(self.step), progress=True)
+                self.verbose('Batch: {}/{}, global step: {}'.format(
+                    b_ind, len(self.train_set), self.tr.step), progress=True)
                 self.lm.zero_grad()
                 loss = 0
-                last_char = torch.zeros((self.batch_size)).to(self.device) # <SOS> for whole batch
+                last_char = torch.zeros((self.train_batch_size)).to(self.device) # <SOS> for whole batch
                 # get inital hidden states
-                (h_1, h_2) = self.lm.init_hidden(self.batch_size, self.device)
+                (h_1, h_2) = self.lm.init_hidden(self.train_batch_size, self.device)
                 # step over the whole sequence
                 for i in range(self.chunk_size):
                     # out.shape = [batch_size, char_dim]
@@ -221,20 +192,31 @@ class CHARLMTrainer(Solver):
                 # take the mean over samples in batch
                 loss = torch.mean(loss)
                 loss.backward()
-                self.optim.step()
+                self.grad_clip(self.lm.parameters(), self.optim)
 
-                if self.step % self.logging_step == 0:
-                    self.log_scalar('train_loss', 
-                        loss.item() / self.chunk_size)
+                loss_by_char = loss.item() / self.chunk_size
 
-                if self.step % self.valid_step == 0:
-                    #self.valid()
+                if self.tr.step % self.logging_step == 0:
+                    self.lg.scalar('train_loss', loss_by_char, 
+                        self.tr.step)
+
+                if self.tr.step % self.valid_step == 0:
                     generated = self.generate()
-                    self.log_text('text_generate', generated)
-                    self.set_globals(self.step, loss.item() / self.chunk_size, 'log')
-                    torch.save(self.lm.state_dict(), self.ckppath)
+                    self.lg.text('text_generate', generated, 
+                            self.tr.step)
 
-                self.step += 1
+                    # save the "best" model if training loss better
+                    if loss_by_char < self.tr.get_best():
+                        # log the best value and save as best model
+                        self.tr.set_best(loss_by_char)
+                        torch.save(self.lm.state_dict(), self.best_ckppath)
+
+                if self.tr.step % self.save_step == 0:
+                    # save the model as a precaution
+                    self.verbose("Model saved at step {}".format(self.tr.step))
+                    torch.save(self.lm.state_dict(), self.ckppath)
+                
+                self.tr.do_step()
 
             self.verbose('Epoch {} finished'.format(epoch))
             epoch += 1
@@ -259,7 +241,6 @@ class CHARLMTrainer(Solver):
         '''
         h_1, h_2 = self.lm.init_hidden(1, self.device)
         x = self.ds.s2l(start).to(self.device) # [seq]
-        #x = x.view(1, x.shape[0], x.shape[1])
         out_string = start
 
         for i in range(x.shape[0] - 1):
@@ -267,12 +248,12 @@ class CHARLMTrainer(Solver):
         
         # The last character of 'start' is the first input
         # for the rest of predicting, shape: [1, 1, features]
-        x = x[-1].view(-1)
+        x = x[-1]#.view(-1)
         for i in range(length):
             out, (h_1, h_2) = self.lm(x, h_1, h_2)
             # first, create a probability distribution over characters
             # using softmax
-            dist = torch.softmax(out.view(-1), dim=-1)
+            dist = torch.softmax(out, dim=-1)
             # then we apply the mapping using temperature, taking the pow
             # is ok here, since all values in dist are 0+.
             dist = dist**(1/temp)
@@ -285,54 +266,15 @@ class CHARLMTrainer(Solver):
             # set the next input
             x = self.ds.s2l(predict_str).to(self.device)
 
-        self.verbose('Finished generating strings')
         return out_string
 
-    def valid(self):
+    def close(self):
         '''
-        Perform validation step
-        
-        BUG: For some weird reason, slurm hangs when I enable this validation
-        step. Therefore we just run the generate to get an idea of the quality
-        of the model
+        Save the most recent model
         '''
-
-        self.lm.eval()
-        self.verbose('Performing validation')
-
-        total_loss = 0.0
-        n_batches = 0
-        while n_batches < 50:
-            for b_ind, ((s_x, s_y), (x_oh, y_oh), (x_l, y_l)) in enumerate(self.eval_dl):
-                loss = 0
-                # get inital hidden states
-                (h_1, h_2) = self.lm.init_hidden(self.batch_size, self.device)
-                # step over the whole sequence
-                for i in range(self.chunk_size):
-                    # out.shape = [batch_size, char_dim]
-                    out, (h_1, h_2) = self.lm(x_oh[:, i, :], h_1, h_2)
-                    labels = y_l[:, i].view(-1)
-                    loss += self.loss_metric(out, labels.long())
-                # take the mean over samples in batch
-                
-                loss = torch.mean(loss)
-                total_loss += loss.detach() / self.chunk_size
-                n_batches +=1 
-
-        avg_loss = total_loss / n_batches
-
-        self.log_scalar('eval_loss', avg_loss)
-
-        if avg_loss < self.best_val_loss:
-            self.best_val_loss = avg_loss.item()
-            self.verbose('Best validation loss for RNNLM : {:.4f} @ global step {}'
-                .format(self.best_val_loss, self.step))
-
-            self.set_globals(self.step, self.best_val_loss, "best")
-            torch.save(self.lm.state_dict(), self.best_ckppath)
-        # generate and log text
-        self.generate()
-        self.lm.train()
+        self.verbose("Finished training! The most recent model will"+\
+            "be saved at step {}".format(self.tr.step))
+        torch.save(self.lm.state_dict(), self.ckppath)
 
 class ASRTrainer(Solver):
     ''' Handler for complete training progress'''
@@ -344,18 +286,15 @@ class ASRTrainer(Solver):
         Load date for training/validation
         Data must be sorted by length of x
         '''
-        self.valid_step = self.config['asr_model']['eval_step']
-        self.max_step = self.config['asr_model']['total_steps']
-
         (self.mapper, _ ,self.train_set) = load_dataset(
-            self.config['asr_model']['train_index'],
-            batch_size=self.config['asr_model']['train_batch_size'],
-            use_gpu=self.paras.gpu)
+            self.config['asr']['train_index'],
+            batch_size=self.train_batch_size, use_gpu=self.paras.gpu)
         
-        (_, _, self.eval_set) = load_dataset(
-            self.config['asr_model']['eval_index'], 
-            batch_size=self.config['asr_model']['eval_batch_size'],            
-            use_gpu=self.paras.gpu)
+        (_, _, self.valid_set) = load_dataset(
+            self.config['asr']['valid_index'], 
+            batch_size=self.valid_batch_size, use_gpu=self.paras.gpu)
+
+        self.wer_step = self.config['asr']['wer_step']
         
     def set_model(self, asr=None):
         ''' Setup ASR'''        
@@ -365,41 +304,35 @@ class ASRTrainer(Solver):
         # Build attention end-to-end ASR
         if asr is None:
             self.asr_model = self.setup_module(ASR, self.ckppath, self.mapper.get_dim(),
-                **self.config['asr_model']['model_para'])
+                **self.config['asr']['model_para'])
         else:
             # a pretrained model has been passed to the solver.
             self.asr_model = asr
         
         # setup optimizer
         self.optim = getattr(torch.optim,
-            self.config['asr_model']['optimizer']['type'])
+            self.config['asr']['optimizer']['type'])
         self.optim = self.optim(self.asr_model.parameters(), 
-            lr=self.config['asr_model']['optimizer']['learning_rate'], eps=1e-8)
+            lr=self.config['asr']['optimizer']['learning_rate'], eps=1e-8)
 
     def get_asr_model(self):
         return self.asr_model
 
     def exec(self):
         ''' Training End-to-end ASR system'''
-        
-        self.verbose('Training set total '+str(len(self.train_set))+' batches.')
 
-        while self.step < self.max_step:
-            for x, y in self.train_set:
-                self.verbose('Global step: {}'.format(self.step), progress=True)
+        self.verbose('Training set total {} batches'.format(len(self.train_set)))
+
+        epoch = 0
+        while epoch < self.n_epochs:
+            self.verbose("Starting epoch {} out of {}".format(epoch+1, self.n_epochs))
+            for b_ind, (x, y) in enumerate(self.train_set):
+                self.verbose('Batch: {}/{}, global step: {}'.format(
+                    b_ind, len(self.train_set), self.tr.step), progress=True)
 
                 (x, x_lens) = prepare_x(x, device=self.device)
                 (y, y_lens) = prepare_y(y, device=self.device)
-
                 state_len = x_lens
-
-                '''
-                TODO: Get to the bottom of this whole '<' skipping thing, how it is 
-                tied into prepare_y and so on.
-
-                The label was shorter by 1 (209 vs 210). Then I decreased ans_len 
-                by 1 and now they are both as long as the label used to be (209)
-                '''
                 ans_len = max(y_lens) - 1
 
                 # ASR forwarding 
@@ -412,6 +345,7 @@ class ASRTrainer(Solver):
         
                 b,t,c = prediction.shape
 
+                # this suspicious view has been shown to work
                 loss = self.seq_loss(prediction.view(b*t,c),label.view(-1))
                 # Sum each uttr and devide by length
                 loss = torch.sum(loss.view(b,t),dim=-1)/torch.sum(y!=0,dim=-1)\
@@ -423,29 +357,27 @@ class ASRTrainer(Solver):
                 loss.backward()
                 self.grad_clip(self.asr_model.parameters(), self.optim)
                 
-                # Logger
-                if self.step % LOGGING_STEP == 0:
-                    self.log_scalar('train_loss', loss)
-                    self.log_scalar('train_acc', calc_acc(prediction,label))
-                    # also, save the current model
-                    self.set_globals(self.step, loss.item(), "log")
+                if self.tr.step % self.logging_step == 0:
+                    self.lg.scalar('train_loss', loss, self.tr.step)
+                    self.lg.scalar('train_acc', calc_acc(prediction,label), self.tr.step)
+
+                if self.tr.step % self.wer_step == 0:
+                    self.lg.scalar('train_error', 
+                        calc_err(prediction, label, mapper=self.mapper), self.tr.step)
+
+                if self.tr.step % self.save_step == 0:
+                    # save the model as a precaution
+                    self.verbose("Model saved at step {}".format(self.tr.step))
                     torch.save(self.asr_model.state_dict(), self.ckppath)
 
-                if self.step % TRAIN_WER_STEP == 0:
-                    self.log_scalar('train_error', 
-                        calc_err(prediction, label, mapper=self.mapper))
-
-                # Validation
-                if self.step % self.valid_step == 0 and self.step != 0:
+                if self.tr.step % self.valid_step == 0 and self.tr.step != 0:
                     self.optim.zero_grad()
                     self.valid()
 
-                self.step += 1 
+                self.tr.do_step()
 
-                if self.step > self.max_step: 
-                    self.verbose('Stopping after reaching maximum training steps')
-                    break
-    
+            epoch += 1
+
     def valid(self):
         '''Perform validation step'''
         self.asr_model.eval()
@@ -456,20 +388,18 @@ class ASRTrainer(Solver):
         predictions, labels = [], []
         
         # Perform validation
-        for b_idx,(x,y) in enumerate(self.eval_set):
-            self.verbose('Validation step - {} ( {} / {} )'.format(
-                self.step, b_idx, len(self.eval_set)), progress=True)
+        for b_idx,(x,y) in enumerate(self.valid_set):
+            self.verbose('Validation step - ( {} / {} )'.format(
+                b_idx, len(self.valid_set)), progress=True)
             
             (x, x_lens) = prepare_x(x, device=self.device)
             (y, y_lens) = prepare_y(y, device=self.device)
-
-            # TODO: Same issue here as in self.exec()
             state_len = x_lens
             ans_len = max(y_lens) - 1
 
             # Forward
             state_len, prediction, att_map = self.asr_model(
-                x, ans_len+VAL_STEP, state_len=state_len)
+                x, ans_len+30, state_len=state_len)
 
             # Compute attention loss & get decoding results
             label = y[:,1:ans_len+1].contiguous()
@@ -502,9 +432,9 @@ class ASRTrainer(Solver):
         avg_err = total_err / num_batches
         avg_acc = total_acc / num_batches
 
-        self.log_scalar('eval_loss', avg_loss)
-        self.log_scalar('eval_error', avg_err)
-        self.log_scalar('eval_acc', avg_acc)
+        self.lg.scalar('eval_loss', avg_loss, self.tr.step)
+        self.lg.scalar('eval_error', avg_err, self.tr.step)
+        self.lg.scalar('eval_acc', avg_acc, self.tr.step)
 
         # Plot attention map to log for the last batch in the validation
         # dataset.
@@ -516,26 +446,35 @@ class ASRTrainer(Solver):
         for idx, attmap in enumerate(val_attmaps):
             #plt.imshow(attmap)
             #plt.show()
-            self.log_image('eval_att_'+str(idx), attmap)
-            self.log_text('eval_hyp_'+str(idx),val_hyp[idx])
-            self.log_text('eval_txt_'+str(idx),val_txt[idx])
+            self.lg.image('eval_att_'+str(idx), attmap, self.tr.step)
+            self.lg.text('eval_hyp_'+str(idx),val_hyp[idx], self.tr.step)
+            self.lg.text('eval_txt_'+str(idx),val_txt[idx], self.tr.step)
  
         # Save model by val er.
-        if avg_loss  < self.best_val_loss:
-            self.best_val_loss = avg_loss.item()
+        if avg_loss  < self.tr.get_best():
+            self.tr.set_best(avg_loss.item())
             self.verbose('Best validation loss for ASR : {:.4f} @ global step {}'
-                .format(self.best_val_loss, self.step))
-
-            self.set_globals(self.step, self.best_val_loss, "best")
-
+                .format(self.tr.get_best(), self.tr.step))
+            self.verbose('Saving best model.')
             torch.save(self.asr_model.state_dict(), self.best_ckppath)
             
             # Save hyps.
             with open(os.path.join(self.ckpdir, 'best_hyp.txt'), 'w') as f:
                 for t1,t2 in zip(predictions, labels):
                     f.write(t1[0]+','+t2[0]+'\n')
+        else:
+            self.verbose("Validation metric worse : ({:.4f} vs. {:.4f})".format(
+                avg_loss, self.tr.get_best()))
 
         self.asr_model.train()
+
+    def close(self):
+        '''
+        Save the most recent model
+        '''
+        self.verbose("Finished training! The most recent model will"+\
+            "be saved at step {}".format(self.tr.step))
+        torch.save(self.asr_model.state_dict(), self.ckppath)
     
 class ASRTester(Solver):
     ''' Handler for complete inference progress'''
@@ -543,19 +482,18 @@ class ASRTester(Solver):
         super(ASRTester, self).__init__(config, paras, 'asr')
         
         self.decode_file = "_".join(
-            ['decode','beam',str(self.config['asr_model']['decode_beam_size']),
-            'len',str(self.config['asr_model']['max_decode_step_ratio'])])
+            ['decode','beam',str(self.config['asr']['decode_beam_size']),
+            'len',str(self.config['asr']['max_decode_step_ratio'])])
 
     def load_data(self):
         (self.mapper, _ ,self.test_set) = load_dataset(
-            self.config['asr_model']['test_index'],
-            batch_size=self.config['asr_model']['test_batch_size'],
-            use_gpu=self.paras.gpu)
+            self.config['asr']['test_index'],
+            batch_size=self.batch_size, use_gpu=self.paras.gpu)
         
     def set_model(self):
         ''' Load saved ASR'''
         self.asr_model = self.setup_module(ASR, self.ckppath, self.mapper.get_dim(),
-            **self.config['asr_model']['model_para'])
+            **self.config['asr']['model_para'])
         # move origin model to cpu, clone it to GPU for each thread
         self.asr_model.eval()
         #self.asr_model = self.asr_model.to('cpu')
@@ -565,13 +503,13 @@ class ASRTester(Solver):
         
         self.rnnlm.eval()
 
-        self.lm_weight = self.config['asr_model']['decode_lm_weight']
-        self.decode_beam_size = self.config['asr_model']['decode_beam_size']
-        self.njobs = self.config['asr_model']['decode_jobs']
-        self.decode_step_ratio = self.config['asr_model']['max_decode_step_ratio']
+        self.lm_weight = self.config['asr']['decode_lm_weight']
+        self.decode_beam_size = self.config['asr']['decode_beam_size']
+        self.njobs = self.config['asr']['decode_jobs']
+        self.decode_step_ratio = self.config['asr']['max_decode_step_ratio']
 
-        self.decode_file += '_lm{:}'.format(self.config['asr_model']['decode_lm_weight'])
-        
+        self.decode_file += '_lm{:}'.format(self.config['asr']['decode_lm_weight'])
+    
     def exec(self):
         '''Perform inference step with beam search decoding.'''
         self.verbose('Start decoding with beam search, beam size: {}'
@@ -582,89 +520,183 @@ class ASRTester(Solver):
         for b_ind, (x, y) in enumerate(self.test_set):
             x, x_len = prepare_x(x, self.device)
             y, _ = prepare_y(y, self.device)
+            # TODO: we are using simple decoding, not beam decoding
             self.asr_model.decode(x, x_len, self.rnnlm, self.mapper)
-        '''
-        _ = Parallel(n_jobs=self.njobs)(
-            delayed(self.beam_decode)(prepare_x(x)[0][0], prepare_y(y)[0][0].tolist()[0]) 
-            for x,y in tqdm(self.test_set))
-        '''
-        '''
-        b_ind, (x, y) = next(enumerate(self.test_set))
-        print(x.shape)
-        x, _ = prepare_x(x)
-        y, _ = prepare_y(y)
-        print(y.shape)
-        y = y.view(1, -1)
-        print(y.shape)
-        self.beam_decode(x, y)
-        '''
-        '''
-        for b_ind, (x, y) in enumerate(self.test_set):
-            print(b_ind)
-            (x, x_lens) = prepare_x(x, device=self.device)
-            print('now here')
-            (y, y_lens) = prepare_y(y, device=self.device)
+                   
+class TAETrainer(Solver):
+    '''
+    Train the Text AutoEncoder
+    '''
+    def __init__(self, config, paras):
+        super(TAETrainer, self).__init__(config, paras, 'tae')
 
-            print("X shape: {}, Y shape: {}".format(x.shape, y.shape))
+    def load_data(self):
+        '''
+        These are loaded with text only and noise, meaning dataloader
+        will return (clean_y, noise_y) for both the training and validation
+        sets
+
+        Also, data must be sorted by length of y
+        '''
+
+        (self.mapper, self.dataset, self.train_set) = load_dataset(
+            self.config['tae']['train_index'], batch_size=self.train_batch_size, 
+            use_gpu=self.paras.gpu, text_only=True, drop_rate=self.config['tae']['drop_rate'])
+
+        (_, _, self.valid_set) = load_dataset(
+            self.config['tae']['valid_index'], batch_size=self.valid_batch_size, 
+            use_gpu=self.paras.gpu, text_only=True, drop_rate=self.config['tae']['drop_rate'])
+
+    def set_model(self, asr_model=None):
+        if asr_model is not None:
+            self.asr_model = asr_model
+        else:
+            self.asr_model = self.setup_module(ASR, os.path.join(self.ckpdir, 'asr.cpt'), 
+                self.mapper.get_dim(), **self.config['asr']['model_para'])
+
+        self.text_autoenc = self.setup_module(TextAutoEncoder, self.ckppath,
+            self.mapper.get_dim(), **self.config['tae']['model_para'])        
+
+        '''
+        The optimizer will optimize:
+        * The whole textautoencoder
+        * The ASR character embedding
+        * The whole ASR attention module
+        * The whole ASR speller module
+        * The ASR char_trans linear layer
+        '''
+
+        self.optim = getattr(torch.optim, self.config['tae']['optimizer']['type'])
+        self.optim = self.optim( 
+                list(self.text_autoenc.parameters()) + \
+                list(self.asr_model.embed.parameters()) + \
+                list(self.asr_model.attention.parameters()) + \
+                list(self.asr_model.decoder.parameters()) + \
+                list(self.asr_model.char_trans.parameters()),
+                lr=self.config['tae']['optimizer']['learning_rate'], eps=1e-8)
+
+        self.loss_metric = torch.nn.CrossEntropyLoss(ignore_index=0, 
+            reduction='none').to(self.device)
+
+    def get_tae_model(self):
+        return self.text_autoenc
+
+    def exec(self):
+        self.verbose('Training set total {} batches'.format(len(self.train_set)))
+        epoch = 0
+        while epoch < self.n_epochs:
+            self.verbose("Starting epoch {} out of {}".format(epoch+1, self.n_epochs))
+            for b_ind, (y, y_noise) in enumerate(self.train_set):
+                self.verbose('Batch: {}/{}, global step: {}'.format(
+                    b_ind, len(self.train_set), self.tr.step), progress=True)
+
+                y, y_lens = prepare_y(y, device=self.device)
+                y_max_len = max(y_lens)
+
+                y_noise, y_noise_lens = prepare_y(y_noise, device=self.device)
+                y_noise_max_lens = max(y_noise_lens)
+                
+                self.optim.zero_grad()
+
+                # decode steps == longest target
+                decode_step = y_max_len 
+                noise_lens, enc_out = self.text_autoenc(self.asr_model, y, y_noise, 
+                    decode_step, noise_lens=y_noise_lens)
+                
+                b,t,c = enc_out.shape
+                loss = self.loss_metric(enc_out.view(b*t,c), y.view(-1))
+                # Sum each uttr and devide by length
+                loss = torch.sum(loss.view(b,t),dim=-1)/torch.sum(y!=0,dim=-1)\
+                    .to(device=self.device, dtype=torch.float32)
+                
+                # Mean by batch
+                loss = torch.mean(loss)
+                loss.backward()
+                self.grad_clip(self.text_autoenc.parameters(), self.optim)
+
+                if self.tr.step % self.logging_step == 0:
+                    self.lg.scalar('train_loss', loss, self.tr.step)
+                
+                if self.tr.step % self.valid_step == 0 and self.tr.step != 0:
+                    self.optim.zero_grad()
+                    self.valid()
+                
+                self.tr.step += 1
+            epoch += 1
             
-            y_list = y.tolist()[0]
-            print("Length of y : {}".format(len(y_list)))
+    def valid(self):
+        self.text_autoenc.eval()
+        self.asr_model.eval()
 
-            print("STarting to beam decode")
-            self.beam_decode(x, y_list)
-            print('Done beam decoding')
-        '''
-        '''
-        self.verbose('Decode done, best results at {}.'.format(
-            str(os.path.join(self.ckpdir,self.decode_file+'.txt'))))
-        
-        self.verbose('Top {} results at {}.'.format(
-            self.decode_beam_size, str(os.path.join(self.ckpdir,self.decode_file+'_nbest.txt'))))
-        '''
-    def write_hyp(self, hyps, y):
-        '''Record decoding results'''
-        gt = self.mapper.translate(y,return_string=True)
-        # Best
-        with open(os.path.join(self.ckpdir,self.decode_file+'.txt'),'a') as f:
-            best_hyp = self.mapper.translate(hyps[0].outIndex, return_string=True)
-            f.write(gt+'\t'+best_hyp+'\n')
-        # N best
-        with open(os.path.join(self.ckpdir,self.decode_file+'_nbest.txt'),'a') as f:
-            for hyp in hyps:
-                best_hyp = self.mapper.translate(hyp.outIndex, return_string=True)
-                f.write(gt+'\t'+best_hyp+'\n')   
-    
+        avg_loss = 0.0
+        n_batches = 0
+        for b_idx, (y, y_noise) in enumerate(self.valid_set):
+            self.verbose('Validation step -( {} / {} )'.format(
+                b_idx, len(self.valid_set)), progress=True)
+            
+            y, y_lens = prepare_y(y, device=self.device)
+            y_max_len = max(y_lens)
 
-    def beam_decode(self, x, y):
-        print("In beam decode")
-        '''Perform beam decoding with end-to-end ASR'''
-        # Prepare data
-        x = x.to(device = self.device,dtype=torch.float32)
-        state_len = torch.sum(torch.sum(x.cpu(),dim=-1)!=0,dim=-1)
-        state_len = [int(sl) for sl in state_len]
-        print(state_len)
-        # Forward
-        with torch.no_grad():
-            max_decode_step =  int(np.ceil(state_len[0]*self.decode_step_ratio))
-            model = copy.deepcopy(self.asr_model).to(self.device)
-            hyps = model.beam_decode(x, max_decode_step, 
-                state_len, self.decode_beam_size, self.rnnlm, self.lm_weight)
-        '''
-        del model
+            y_noise, y_noise_lens = prepare_y(y_noise, device=self.device)
+            y_noise_max_lens = max(y_noise_lens)
+            
+            # decode steps == longest target
+            decode_step = y_max_len 
+            noise_lens, enc_out = self.text_autoenc(self.asr_model, y, y_noise, 
+                decode_step, noise_lens=y_noise_lens)
+            
+            b,t,c = enc_out.shape
+            loss = self.loss_metric(enc_out.view(b*t,c), y.view(-1))
+            # Sum each uttr and devide by length
+            loss = torch.sum(loss.view(b,t),dim=-1)/torch.sum(y!=0,dim=-1)\
+                .to(device=self.device, dtype=torch.float32)
+            
+            # Mean by batch
+            loss = torch.mean(loss)
+            self.lg.scalar('eval_loss', loss, self.tr.step)
         
-        self.write_hyp(hyps,y)
-        del hyps
+            avg_loss += loss.detach()
+            n_batches += 1
+        
+        # compare the strings of the last batch
+        labels = [self.mapper.translate(l) for l in y.cpu()]
+        predicts = [self.mapper.translate(p) for p in 
+            np.argmax(enc_out.cpu().detach(), axis=-1)]
+        for i in range(self.valid_batch_size):
+            self.lg.text('eval_text'+str(i), '{} |vs.| {}'.format(labels[i], predicts[i]), self.tr.step)
+
+        avg_loss /=  n_batches
+        avg_loss = avg_loss.item()      
+        if avg_loss < self.tr.get_best():
+            # then we save the model
+            self.tr.set_best(avg_loss)
+            self.verbose('Best validation loss : {:.4f} @ global step {}'.format(
+                self.tr.get_best(), self.tr.step))
+            torch.save(self.text_autoenc.state_dict(), self.best_ckppath)
+            # TODO: swap with real ASR
+            torch.save(self.asr_model.state_dict(), os.path.join(self.ckpdir, 'modified_asr.cpt'))
+            self.verbose("Both the text autoencoder and ASR have been saved")
+        
+        else:
+            self.verbose("Validation metric worse : ({:.4f} vs. {:.4f})".format(
+                avg_loss, self.tr.get_best()))
+
+        self.text_autoenc.train()
+        self.asr_model.train()
+
+    def close(self):
         '''
-        return 1
+        Save the most recent model
+        '''
+        self.verbose("Finished training! The most recent model will"+\
+            "be saved at step {} as well as the ASR model".format(self.tr.step))
+        torch.save(self.text_autoenc.state_dict(), self.ckppath)
+        # TODO: swap with real ASR
+        torch.save(self.asr_model.state_dict(), os.path.join(self.ckpdir, 'modified_asr.cpt'))
 
 class SAETrainer(Solver):
     '''
     Train the Speech AutoEncoder.
-
-    Parameters that this should train:
-    * speech_autoenc.encoder (definetly)
-    * speech_autoenc.decoder (definetly)
-    * asr.listener              (likely)
     '''
     def __init__(self, config, paras):
         super(SAETrainer, self).__init__(config, paras, 'sae')
@@ -672,93 +704,87 @@ class SAETrainer(Solver):
     def load_data(self):
         # data must be sorted by length of x.
 
-        self.valid_step = self.config['speech_autoencoder']['eval_step']
-        self.max_step = self.config['speech_autoencoder']['total_steps']
-
-
         (self.mapper, _, self.train_set) = load_dataset(
-            self.config['speech_autoencoder']['train_index'], 
-            batch_size=self.config['speech_autoencoder']['train_batch_size'], 
-            use_gpu=self.paras.gpu)
+            self.config['sae']['train_index'], 
+            batch_size=self.train_batch_size, use_gpu=self.paras.gpu)
 
-        (_, _, self.eval_set) = load_dataset(
-            self.config['speech_autoencoder']['eval_index'], 
-            batch_size=self.config['speech_autoencoder']['eval_batch_size'],
-            use_gpu=self.paras.gpu)
+        (_, _, self.valid_set) = load_dataset(
+            self.config['sae']['valid_index'], 
+            batch_size=self.valid_batch_size, use_gpu=self.paras.gpu)
     
     def set_model(self, asr_model=None):
         if asr_model is not None:
             self.asr_model = asr_model
         else:
             self.asr_model = self.setup_module(ASR, os.path.join(self.ckpdir, 'asr.cpt'), 
-                self.mapper.get_dim(), **self.config['asr_model']['model_para'])
+                self.mapper.get_dim(), **self.config['asr']['model_para'])
 
         self.speech_autoenc = self.setup_module(SpeechAutoEncoder, self.ckppath, 
-            self.asr_model.encoder.out_dim, self.config['asr_model']['model_para']['feature_dim'],
-            **self.config['speech_autoencoder']['model_para'])
-
-        # set loss metrics and optimizer
+            self.asr_model.encoder.out_dim, self.config['asr']['model_para']['feature_dim'],
+            **self.config['sae']['model_para'])
 
         '''
         The optimizer will optimize:
         * The whole SpeechAutoencoder
         * The listener of the ASR model
         '''
-        self.optim = getattr(torch.optim, self.config['speech_autoencoder']['optimizer']['type'])
+        self.optim = getattr(torch.optim, self.config['sae']['optimizer']['type'])
         self.optim = self.optim(
             list(self.speech_autoenc.parameters()) + \
             list(self.asr_model.encoder.parameters()), 
-            lr=self.config['speech_autoencoder']['optimizer']['learning_rate'], eps=1e-8)
+            lr=self.config['sae']['optimizer']['learning_rate'], eps=1e-8)
 
         self.loss_metric = nn.SmoothL1Loss(reduction='none').to(self.device)
 
     def exec(self):
-        self.verbose('Training set total '+str(len(self.train_set))+' batches.')
+        self.verbose('Training set total {} batches.'.format(len(self.train_set)))
+        epoch = 0
+        while epoch < self.n_epochs:
+            self.verbose("Starting epoch {} out of {}".format(epoch+1, self.n_epochs))
+            for b_ind, (x, y) in enumerate(self.train_set):
+                self.verbose('Batch: {}/{}, global step: {}'.format(
+                    b_ind, len(self.train_set), self.tr.step), progress=True)
 
-        for x, y in self.train_set:
-            self.verbose('Global step: {}'.format(self.step), progress=True)
-
-            x, x_lens = prepare_x(x, device=self.device)
-            self.optim.zero_grad()
-
-            enc_out = self.speech_autoenc(self.asr_model, x, x_lens)
-            # pad the encoder output UP to the maximum batch time frames and 
-            # pad x DOWN to the same number of frames
-            batch_t = max(x_lens)
-            x = x[:, :batch_t, :]
-            enc_final = torch.zeros([enc_out.shape[0], batch_t, enc_out.shape[2]]).to(self.device)
-            enc_final[:, :enc_out.shape[1], :] = enc_out
-            loss = self.loss_metric(enc_final, x)
-
-            # Divide each by length of x and sum, then take the average over the
-            # batch
-            loss = torch.sum(loss.view(loss.shape[0], -1))/torch.Tensor(x_lens)\
-                .to(self.device)
-            loss = torch.mean(loss)
-            loss.backward()
-            self.grad_clip(self.speech_autoenc.parameters(), self.optim)
-
-            self.log_scalar('train_loss', loss)
-
-            if self.step % self.valid_step == 0 and self.step != 0:
+                x, x_lens = prepare_x(x, device=self.device)
                 self.optim.zero_grad()
-                self.valid()
-            
-            self.step += 1
-            
-            if self.step > self.max_step:
-                self.verbose('Stopping after reaching maximum training steps')
-                break
-    
+
+                # shape is [batch_size, 8*(~seq/8), feature_dim]
+                autoenc_out = self.speech_autoenc(self.asr_model, x, x_lens)
+                # pad the encoder output UP to the maximum batch time frames and 
+                # pad x DOWN to the same number of frames
+                batch_t = max(x_lens)
+                x = x[:, :batch_t, :]
+                enc_final = torch.zeros([autoenc_out.shape[0], batch_t, 
+                    autoenc_out.shape[2]]).to(self.device)
+                enc_final[:, :autoenc_out.shape[1], :] = autoenc_out
+                loss = self.loss_metric(enc_final, x)
+
+                # Divide each by length of x and sum, then take the average over the
+                # batch
+                loss = torch.sum(loss.view(loss.shape[0], -1))/torch.Tensor(x_lens)\
+                    .to(self.device)
+                loss = torch.mean(loss)
+                loss.backward()
+                self.grad_clip(self.speech_autoenc.parameters(), self.optim)
+
+                self.lg.scalar('train_loss', loss, self.tr.step)
+
+                if self.tr.step % self.valid_step == 0 and self.tr.step != 0:
+                    self.optim.zero_grad()
+                    self.valid()
+
+                self.tr.do_step()
+            epoch += 1
+                
     def valid(self):
         self.speech_autoenc.eval()
         self.asr_model.eval()
 
         avg_loss = 0.0
         n_batches = 0
-        for b_idx, (x, y) in enumerate(self.eval_set):
+        for b_idx, (x, y) in enumerate(self.valid_set):
             self.verbose('Validation step - {} ( {} / {} )'.format(
-                self.step, b_idx, len(self.eval_set)), progress=True)
+                self.tr.step, b_idx, len(self.valid_set)), progress=True)
             
             x, x_lens = prepare_x(x, device=self.device)
 
@@ -777,221 +803,78 @@ class SAETrainer(Solver):
             loss = torch.sum(loss.view(loss.shape[0], -1)) / torch.Tensor(x_lens)\
                 .to(self.device)
             loss = torch.mean(loss)
-           
+
             avg_loss += loss.detach()
             n_batches += 1
-        
+
+        # draw comparisons for each sample in the last batch
+        for i in range(self.valid_batch_size):
+            x_len = x_lens[i]
+            label_img = x[i,:x_len,:].cpu()
+            predict_img = enc_final[i, :x_len, :].detach().cpu()
+            # permute so we get correct specshow results
+            label_img = label_img.permute(1, 0)
+            predict_img = predict_img.permute(1, 0)
+
+            fig = plt.figure()
+            plt.subplot(2,1,1)
+            specshow(label_img.numpy())
+            plt.subplot(2,1,2)
+            specshow(predict_img.numpy())
+            
+            self.lg.figure('encode_compare_'+str(i), fig, self.tr.step)
+
         avg_loss /=  n_batches
-        avg_loss = avg_loss.item()      
-        if avg_loss < self.best_val_loss:
+        avg_loss = avg_loss.item()
+
+        self.lg.scalar('eval_loss', avg_loss, self.tr.step)
+      
+        if avg_loss < self.tr.get_best():
             # then we save the model
-            self.best_val_loss = avg_loss
-            self.set_globals(self.step, self.best_val_loss)
-
+            self.tr.set_best(avg_loss)
             self.verbose('Best validation loss : {:.4f} @ global step {}'
-                .format(self.best_val_loss, self.step))
-
-            torch.save(self.speech_autoenc.state_dict(), self.ckppath)
+                .format(self.tr.get_best(), self.tr.step))
+            torch.save(self.speech_autoenc.state_dict(), self.best_ckppath)
+            # TODO swap with real ASR
             torch.save(self.asr_model.state_dict(), os.path.join(self.ckpdir, 'modified_asr.cpt'))
-
-            '''
-            asr_trainer = ASRTrainer(self.config, self.paras)
-            asr_trainer.set_model(self.asr_model)
-            asr_trainer.load_data()
-            asr_trainer.valid()
-            '''
+        else:
+            self.verbose("Validation metric worse : ({:.4f} vs. {:.4f})".format(
+                avg_loss, self.tr.get_best()))
 
         self.speech_autoenc.train()
-        self.asr_model.train() 
-                   
-class TAETrainer(Solver):
-    '''
-    Train the Text AutoEncoder
-    '''
-    def __init__(self, config, paras):
-        super(TAETrainer, self).__init__(config, paras, 'tae')
-
-    def load_data(self):
+        self.asr_model.train()
+    
+    def close(self):
         '''
-        These are loaded with text only and noise, meaning dataloader
-        will return (clean_y, noise_y) for both the training and validation
-        sets
-
-        Also, data must be sorted by length of y
+        Save the most recent model
         '''
+        self.verbose("Finished training! The most recent model will"+\
+            "be saved at step {} as well as the ASR model".format(self.tr.step))
+        torch.save(self.speech_autoenc.state_dict(), self.ckppath)
+        # TODO: swap with real ASR
+        torch.save(self.asr_model.state_dict(), os.path.join(self.ckpdir, 'modified_asr.cpt'))
 
-        self.valid_step = self.config['text_autoencoder']['eval_step']
-        self.max_step = self.config['text_autoencoder']['total_steps']
-
-        (self.mapper, self.dataset, self.train_set) = load_dataset(
-            self.config['text_autoencoder']['train_index'], 
-            batch_size=self.config['text_autoencoder']['train_batch_size'], 
-            use_gpu=self.paras.gpu, text_only=True, 
-            drop_rate=self.config['text_autoencoder']['drop_rate'])
-
-        (_, _, self.eval_set) = load_dataset(
-            self.config['text_autoencoder']['eval_index'], 
-            batch_size=self.config['text_autoencoder']['eval_batch_size'],
-            use_gpu=self.paras.gpu, text_only=True,
-            drop_rate=self.config['text_autoencoder']['drop_rate'])
-
-    def set_model(self, asr_model=None):
-        if asr_model is not None:
-            self.asr_model = asr_model
-        else:
-            self.asr_model = self.setup_module(ASR, os.path.join(self.ckpdir, 'asr.cpt'), 
-                self.mapper.get_dim(), **self.config['asr_model']['model_para'])
-
-        self.text_autoenc = self.setup_module(TextAutoEncoder, self.ckppath,
-            self.mapper.get_dim(), **self.config['text_autoencoder']['model_para'])        
-
-        '''
-        The optimizer will optimize:
-        * The whole textautoencoder
-        * The ASR character embedding
-        * The whole ASR attention module
-        * The whole ASR speller module
-        * The ASR char_trans linear layer
-        '''
-
-        self.optim = getattr(torch.optim, self.config['text_autoencoder']['optimizer']['type'])
-        self.optim = self.optim( 
-                list(self.text_autoenc.parameters()) + \
-                list(self.asr_model.embed.parameters()) + \
-                list(self.asr_model.attention.parameters()) + \
-                list(self.asr_model.decoder.parameters()) + \
-                list(self.asr_model.char_trans.parameters()),
-                lr=self.config['text_autoencoder']['optimizer']['learning_rate'], eps=1e-8)
-
-        self.loss_metric = torch.nn.CrossEntropyLoss(ignore_index=0, 
-            reduction='none').to(self.device)
-
-    def get_tae_model(self):
-        return self.text_autoenc
-
-    def exec(self):
-        self.verbose('Training set total '+str(len(self.train_set))+' batches.')
-
-        for b_idx, (y, y_noise) in enumerate(self.train_set):
-            self.verbose('Global step: {}'.format(self.step), progress=True)
-
-            y, y_lens = prepare_y(y, device=self.device)
-            y_max_len = max(y_lens)
-
-            y_noise, y_noise_lens = prepare_y(y_noise, device=self.device)
-            y_noise_max_lens = max(y_noise_lens)
-            
-            self.optim.zero_grad()
-
-            # decode steps == longest target
-            decode_step = y_max_len 
-            noise_lens, enc_out = self.text_autoenc(self.asr_model, y, y_noise, 
-                decode_step, noise_lens=y_noise_lens)
-            
-            b,t,c = enc_out.shape
-            loss = self.loss_metric(enc_out.view(b*t,c), y.view(-1))
-            # Sum each uttr and devide by length
-            loss = torch.sum(loss.view(b,t),dim=-1)/torch.sum(y!=0,dim=-1)\
-                .to(device=self.device, dtype=torch.float32)
-            
-            # Mean by batch
-            loss = torch.mean(loss)
-            loss.backward()
-            self.grad_clip(self.text_autoenc.parameters(), self.optim)
-
-
-            self.log_scalar('train_loss', loss)
-            
-            if self.step % self.valid_step == 0 and self.step != 0:
-                self.optim.zero_grad()
-                self.valid()
-            
-            self.step += 1
-            
-            if self.step > self.max_step:
-                self.verbose('Stopping after reaching maximum training steps')
-                break
-
-    def valid(self):
-        self.text_autoenc.eval()
-        self.asr_model.eval()
-
-        avg_loss = 0.0
-        n_batches = 0
-        for b_idx, (y, y_noise) in enumerate(self.eval_set):
-            self.verbose('Validation step - {} ( {} / {} )'.format(
-                self.step, b_idx, len(self.eval_set)), progress=True)
-            
-            y, y_lens = prepare_y(y, device=self.device)
-            y_max_len = max(y_lens)
-
-            y_noise, y_noise_lens = prepare_y(y_noise, device=self.device)
-            y_noise_max_lens = max(y_noise_lens)
-            
-            # decode steps == longest target
-            decode_step = y_max_len 
-            noise_lens, enc_out = self.text_autoenc(self.asr_model, y, y_noise, 
-                decode_step, noise_lens=y_noise_lens)
-            
-            b,t,c = enc_out.shape
-            loss = self.loss_metric(enc_out.view(b*t,c), y.view(-1))
-            # Sum each uttr and devide by length
-            loss = torch.sum(loss.view(b,t),dim=-1)/torch.sum(y!=0,dim=-1)\
-                .to(device=self.device, dtype=torch.float32)
-            
-            # Mean by batch
-            loss = torch.mean(loss)
-            self.log_scalar('eval_loss', loss)
-
-            avg_loss += loss.detach()
-            n_batches += 1
-        
-        avg_loss /=  n_batches
-        avg_loss = avg_loss.item()      
-        if avg_loss < self.best_val_loss:
-            # then we save the model
-            self.best_val_loss = avg_loss
-            self.set_globals(self.step, self.best_val_loss)
-
-            self.verbose('Best validation loss : {:.4f} @ global step {}'
-                .format(self.best_val_loss, self.step))
-
-            torch.save(self.text_autoenc.state_dict(), self.ckppath)
-
-            torch.save(self.asr_model.state_dict(), os.path.join(self.ckpdir, 'modified_asr.cpt'))
-            '''
-            asr_trainer = ASRTrainer(self.config, self.paras)
-            asr_trainer.set_model(self.asr_model)
-            asr_trainer.load_data()
-            asr_trainer.valid()
-            '''
-
-        self.text_autoenc.train()
-        self.asr_model.train() 
-
-class AdvTrainer(Solver):
+class ADVTrainer(Solver):
     '''
     Do adversarial training on both the Discriminator and
     the Generator (Listener) using the Text encoder as a 
     data source
     '''
     def __init__(self, config, paras):
-        super(AdvTrainer, self).__init__(config, paras, 'adv')
+        super(ADVTrainer, self).__init__(config, paras, 'adv')
 
     def load_data(self):
         # data is sorted by length of x
-
-        self.valid_step = self.config['discriminator']['eval_step']
-        self.max_step = self.config['discriminator']['total_steps']
+        self.max_step = self.config['adv']['total_steps']
 
         (self.mapper, self.dataset, self.train_set) = load_dataset(
-            self.config['discriminator']['train_index'], 
-            batch_size=self.config['discriminator']['train_batch_size'], 
+            self.config['adv']['train_index'], 
+            batch_size=self.config['adv']['train_batch_size'], 
             use_gpu=self.paras.gpu)
 
-        (_, _, self.eval_set) = load_dataset(
-            self.config['discriminator']['eval_index'], 
-            batch_size=self.config['discriminator']['eval_batch_size'],
+        (_, _, self.valid_set) = load_dataset(
+            self.config['adv']['eval_index'], 
+            batch_size=self.config['adv']['valid_batch_size'],
             use_gpu=self.paras.gpu)
         
     def set_model(self, asr_model=None, tae_model=None):
@@ -999,25 +882,29 @@ class AdvTrainer(Solver):
             self.asr_model = asr_model
         else:
             self.asr_model = self.setup_module(ASR, os.path.join(self.ckpdir, 'asr.cpt'), 
-                self.mapper.get_dim(), **self.config['asr_model']['model_para'])
+                self.mapper.get_dim(), **self.config['asr']['model_para'])
         if tae_model is not None:
             self.text_autoenc = tae_model
         else:
-            self.text_autoenc = self.setup_module(TextAutoEncoder, os.path.join(self.ckpdir, 'tae.cpt'),
-                self.mapper.get_dim(), **self.config['text_autoencoder']['model_para'])        
+            self.text_autoenc = self.setup_module(TextAutoEncoder, 
+                os.path.join(self.ckpdir, 'tae.cpt'), self.mapper.get_dim(), 
+                **self.config['tae']['model_para'])        
 
         self.discriminator = self.setup_module(Discriminator, self.ckppath,
-            self.asr_model.encoder.get_outdim(), **self.config['discriminator']['model_para'])
+            self.asr_model.encoder.get_outdim(), 
+            **self.config['adv']['model_para'])
         
         self.data_distribution = self.text_autoenc.encoder
         
-        self.G_optim = getattr(torch.optim, self.config['discriminator']['G_optimizer']['type'])
+        self.G_optim = getattr(torch.optim, 
+            self.config['adv']['G_optimizer']['type'])
         self.G_optim = self.G_optim(self.asr_model.encoder.parameters(), 
-            lr=self.config['discriminator']['G_optimizer']['learning_rate'], eps=1e-8)
+            lr=self.config['adv']['G_optimizer']['learning_rate'], eps=1e-8)
 
-        self.D_optim = getattr(torch.optim, self.config['discriminator']['D_optimizer']['type'])
+        self.D_optim = getattr(torch.optim, 
+            self.config['adv']['D_optimizer']['type'])
         self.D_optim = self.D_optim(self.discriminator.parameters(), 
-            lr=self.config['discriminator']['D_optimizer']['learning_rate'], eps=1e-8)
+            lr=self.config['adv']['D_optimizer']['learning_rate'], eps=1e-8)
 
         self.loss_metric = torch.nn.BCELoss().to(self.device)
 
@@ -1030,7 +917,7 @@ class AdvTrainer(Solver):
         '''
         for b_idx, (x, y) in enumerate(self.train_set):
             self.verbose('Global step - {} ( {} / {} )'.format(
-                self.step, b_idx, len(self.train_set)), progress=True)     
+                self.tr.step, b_idx, len(self.train_set)), progress=True)     
 
             x, x_lens = prepare_x(x, device=self.device)    
             y, y_lens = prepare_y(y, device=self.device)
@@ -1046,7 +933,7 @@ class AdvTrainer(Solver):
             real_data = self.data_distribution(y) # [bs, seq, 512]
             D_out = self.discriminator(real_data)
             real_labels = torch.ones(batch_size, real_data.shape[1]).to(self.device) \
-                - self.config['discriminator']['label_smoothing']
+                - self.config['adv']['label_smoothing']
 
             D_realloss = self.loss_metric(D_out.squeeze(dim=2), real_labels)
             D_realloss.backward()
@@ -1065,9 +952,9 @@ class AdvTrainer(Solver):
 
             self.grad_clip(self.discriminator.parameters(), self.D_optim)
 
-            self.log_scalar('discrim_real_loss_train', D_realloss)
-            self.log_scalar('discrim_fake_loss_train', D_fakeloss)
-            self.log_scalar('discrim_loss_train', D_totalloss)
+            self.lg.scalar('discrim_real_loss_train', D_realloss, self.tr.step)
+            self.lg.scalar('discrim_fake_loss_train', D_fakeloss, self.tr.step)
+            self.lg.scalar('discrim_loss_train', D_totalloss, self.tr.step)
 
 
             '''
@@ -1098,17 +985,17 @@ class AdvTrainer(Solver):
             G_loss.backward()
             self.grad_clip(self.asr_model.encoder.parameters(), self.G_optim)
 
-            self.log_scalar('gen_loss_train', G_loss)
+            self.lg.scalar('gen_loss_train', G_loss)
 
 
-            if self.step % self.valid_step == 0 and self.step != 0:
+            if self.tr.step % self.valid_step == 0 and self.tr.step != 0:
                 self.G_optim.zero_grad()
                 self.D_optim.zero_grad()
                 self.valid()
             
-            self.step += 1
+            self.tr.step += 1
             
-            if self.step > self.max_step:
+            if self.tr.step > self.max_step:
                 self.verbose('Stopping after reaching maximum training steps')
                 break
         
@@ -1117,9 +1004,9 @@ class AdvTrainer(Solver):
 
         avg_loss = 0.0
         n_batches = 0
-        for b_idx, (x, y) in enumerate(self.eval_set):
+        for b_idx, (x, y) in enumerate(self.valid_set):
             self.verbose('Validation step - {} ( {} / {} )'.format(
-                self.step, b_idx, len(self.eval_set)), progress=True)
+                self.tr.step, b_idx, len(self.valid_set)), progress=True)
             
             x, x_lens = prepare_x(x, device=self.device)    
             y, y_lens = prepare_y(y, device=self.device)
@@ -1144,127 +1031,33 @@ class AdvTrainer(Solver):
             # update the parameters and collect total loss
             D_totalloss = D_realloss + D_fakeloss
 
-            self.log_scalar('discrim_real_loss_eval', D_realloss)
-            self.log_scalar('discrim_fake_loss_eval', D_fakeloss)
-            self.log_scalar('discrim_loss_eval', D_totalloss)
+            self.lg.scalar('discrim_real_loss_eval', D_realloss, self.tr.step)
+            self.lg.scalar('discrim_fake_loss_eval', D_fakeloss, self.tr.step)
+            self.lg.scalar('discrim_loss_eval', D_totalloss, self.tr.step)
             avg_loss += D_totalloss.detach()
             n_batches += 1
         
         avg_loss /=  n_batches
         avg_loss = avg_loss.item()      
-        if avg_loss < self.best_val_loss:
+        if avg_loss < self.tr.get_best():
             # then we save the model
-            self.best_val_loss = avg_loss
-            self.set_globals(self.step, self.best_val_loss)
+            self.tr.set_best(avg_loss)
 
             self.verbose('Best validation loss : {:.4f} @ global step {}'
-                .format(self.best_val_loss, self.step))
-
-            torch.save(self.discriminator.state_dict(), self.ckppath)
+                .format(self.tr.get_best(), self.tr.step))
+            torch.save(self.discriminator.state_dict(), self.best_ckppath)
 
         self.discriminator.train()
 
-class LMTrainer(Solver):
-    ''' Trainer for RNN-LM only'''
-    '''
-    BUG: for some reason, this Trainer never achieved good validation results,
-    and in fact, validation error kept increasing during training.
-    '''
-    def __init__(self, config, paras):
-        super(LMTrainer, self).__init__(config, paras, 'rnn_lm')
-
-    def load_data(self):
-        ''' 
-        Load training / evaluation sets
-        Data must be sorted by length of y
+    def close(self):
         '''
-        self.valid_step = self.config['rnn_lm']['eval_step']
-        self.max_step = self.config['rnn_lm']['total_steps']
-
-
-        (self.mapper, _, self.train_set) = load_dataset(
-            self.config['rnn_lm']['train_index'], 
-            batch_size=self.config['rnn_lm']['train_batch_size'], 
-            use_gpu=self.paras.gpu, text_only=True)
-
-        (_, _, self.eval_set) = load_dataset(
-            self.config['rnn_lm']['eval_index'], 
-            batch_size=self.config['rnn_lm']['eval_batch_size'],
-            use_gpu=self.paras.gpu, text_only=True)
-
-    def set_model(self):
-        ''' Setup RNNLM'''
-        self.verbose('Init RNNLM model.')
-
-        self.rnnlm = self.setup_module(LM, self.ckppath, self.mapper.get_dim(), 
-            **self.config['rnn_lm']['model_para'])
-
-        # optimizer
-        self.optim = getattr(torch.optim,
-            self.config['rnn_lm']['optimizer']['type'])
-        self.optim = self.optim(self.rnnlm.parameters(), 
-            lr=self.config['rnn_lm']['optimizer']['learning_rate'], eps=1e-8)
-
-    def exec(self):
-        ''' Training RNN-LM'''
-        self.verbose('RNN-LM Training set total '+str(len(self.train_set))+' batches.')
-
-        while self.step < self.max_step:
-            for y in self.train_set:
-                self.verbose('Global step: {}'.format(self.step), progress=True)
-
-                (y, y_lens) = prepare_y(y, device=self.device)
-                # we remove <eos> while predicting so lengths are cut one short
-                y_lens = [l-1 for l in y_lens]                
-
-                self.optim.zero_grad()
-                _, prob = self.rnnlm(y[:,:-1], y_lens)
-                loss = F.cross_entropy(prob.view(-1,prob.shape[-1]), 
-                    y[:,1:].contiguous().view(-1), ignore_index=0)
-                loss.backward()
-                self.optim.step()
-
-                # logger
-                self.log_scalar('train_loss',  loss)
-
-                # Next step
-                self.step += 1
-                if self.step % self.valid_step ==0:
-                    self.valid()
-                if self.step > self.max_step:
-                    break
-
-    def valid(self):
-        self.rnnlm.eval()
-        total_loss = 0.0
-        num_samples = 0 
-
-        for cur_b,y in enumerate(self.eval_set):
-            self.verbose('Validation step - {} ( {} / {} )'.format(
-                self.step, cur_b, len(self.eval_set)), progress=True)
-            
-            (y, y_lens) = prepare_y(y, device=self.device)
-            # we remove <eos> while predicting so lengths are cut one short
-            y_lens = [l-1 for l in y_lens]
-
-            _, prob = self.rnnlm(y[:,:-1], y_lens)
-            loss = F.cross_entropy(prob.view(-1,prob.shape[-1]), 
-                y[:,1:].contiguous().view(-1), ignore_index=0)
-            
-            total_loss  += loss.clone().detach()
-            num_samples += y.shape[0]
-
-        avg_loss = total_loss.item()/num_samples
-        self.log_scalar('eval_loss', avg_loss)
-        
-        # Store model with the best perplexity
-        if avg_loss < self.best_val_loss:
-            self.best_val_loss  = avg_loss
-            self.verbose('Best validation loss : {:.4f} @ step {}'
-                .format(self.best_val_loss, self.step))
-            self.set_globals(self.step, self.best_val_loss)
-            torch.save(self.rnnlm.state_dict(), self.ckppath)
-        self.rnnlm.train()
+        Save the most recent model
+        '''
+        self.verbose("Finished training! The most recent model will"+\
+            "be saved at step {} as well as the ASR model".format(self.tr.step))
+        torch.save(self.discriminator.state_dict(), self.ckppath)
+        # TODO: swap with real ASR
+        #torch.save(self.asr_model.state_dict(), os.path.join(self.ckpdir, 'modified_asr.cpt'))
 
 '''
 SuperSolver combines every training solver in src.solver.py and runs each

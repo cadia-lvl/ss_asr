@@ -22,6 +22,12 @@ class SpeechAutoEncoder(nn.Module):
         self.feature_dim = feature_dim
 
         self.encoder = SpeechEncoder(kernel_sizes, num_filters, pool_kernel_sizes)
+        
+        '''
+        The decoder takes as input concatenation of all global 
+        encoder output and one step of listener output. It predicts
+        8 frames of input audio, hence 8 * feature_dim
+        '''        
         self.decoder = SpeechDecoder(
             self.encoder.out_dim+listener_out_dim, 8*feature_dim)
 
@@ -35,20 +41,39 @@ class SpeechAutoEncoder(nn.Module):
         descending order.
         '''
 
-        listener_out, state_len = asr.encoder(x, x_len)
+        # ASR-encode the whole batch of utterances
+        # listener_out shape : [batch_size, ~seq/8, listener.out_dim]
+        listener_out, _ = asr.encoder(x, x_len)
 
-        # out shape: [batch, 1, 1, self.encoder.out_dim]
+        # global-encode the whole batch of utterances
+        # encoder_out shape: [batch, 1, 1, self.encoder.out_dim]
         encoder_out = self.encoder(x.unsqueeze(1))
-
+        # reshape into [batch, encoder.out_dim]
+        encoder_out = encoder_out.squeeze()
+        
         predict_seq = []
         # concatenate the two outputs
         for i in range(listener_out.shape[1]):
-            decoder_in = torch.cat((listener_out[:, i, :].view(listener_out.shape[0], -1),
-                encoder_out.view(encoder_out.shape[0], -1)), dim=1)
+            '''
+            Decoder in is the concatenation of a single listener output
+            and the complete global-encoder output:
+
+            [l_1, l_2, ..., l_k, g_1, g_2, ... g_m]
+            '''
+            
+            # shape : [batch_size, listener.out_dim]
+            listener_step = listener_out[:, i, :]
+            # shape : [batch_size, encoder.out_dim + listener.out_dim]
+            decoder_in = torch.cat((listener_step, encoder_out), dim=1)
 
             # shape: [batch_size, 8*self.feature_dim]
             decoder_out = self.decoder(decoder_in)
             # shape: [batch_size, 8, self.feature_dim]
+            '''
+            This susspicious .view() has been verified, that is
+            decoder_out[i, j, k] represents the k-th frequency band
+            of the j-th frame in the i-th sample
+            '''
             decoder_out = decoder_out.view(decoder_out.shape[0], 8, self.feature_dim)
             
             predict_seq.append(decoder_out)
@@ -81,7 +106,8 @@ class SpeechEncoder(nn.Module):
             nn.Conv2d(
                 in_channels=1,
                 out_channels=num_filters[0],
-                kernel_size=ks[0]),
+                kernel_size=ks[0],
+                bias=False),
             nn.BatchNorm2d(num_features=num_filters[0]),
             nn.ReLU(),
             nn.MaxPool2d(pool_ks[0]))
@@ -90,7 +116,8 @@ class SpeechEncoder(nn.Module):
             nn.Conv2d(
                 in_channels=num_filters[0],
                 out_channels=num_filters[1],
-                kernel_size=ks[1]),
+                kernel_size=ks[1],
+                bias=False),
             nn.BatchNorm2d(num_features=num_filters[1]),
             nn.ReLU(),
             nn.MaxPool2d(pool_ks[1]))
@@ -99,7 +126,8 @@ class SpeechEncoder(nn.Module):
             nn.Conv2d(
                 in_channels=num_filters[1],
                 out_channels=num_filters[2],
-                kernel_size=ks[2]),
+                kernel_size=ks[2],
+                bias=False),
             nn.BatchNorm2d(num_features=num_filters[2]),
             nn.ReLU(),
             nn.MaxPool2d(pool_ks[2]))
@@ -168,60 +196,4 @@ class SpeechDecoder(nn.Module):
         Output: A [batch_size, self.out_dim], where out dim is reshapable into 8
         original frames of input fbanks.
         '''
-        #x = self.leaky_1(x)
-        #x = self.leaky_2(x)
-        #x = self.out(x)
         return self.core(x)
-
-def test_solver():
-    from asr import Listener
-    from dataset import load_dataset, prepare_x, prepare_y
-
-    (mapper, dataset, dataloader) = load_dataset('data/processed/index.tsv', 
-        batch_size=2, n_jobs=1, use_gpu=False)
-
-
-    kernel_sizes = [(36, 1), (1, 5), (1, 3)]
-    num_filters = [32, 64, 256]
-    # HACK: I set the final max pooling kernel sizes at just some high value to cover
-    # the whole thing
-    max_pooling_sizes = [(3, 1), (5, 1), (2000, 40)]
-
-    # TODO: add to device, like line 80 in solver.py
-    loss_metric = nn.SmoothL1Loss(reduction='none')
-
-    listener = Listener(256, 40)
-    speech_autoenc = SpeechAutoEncoder(kernel_sizes, num_filters, 
-        max_pooling_sizes, 40, listener)
-
-    optim = torch.optim.SGD(speech_autoenc.parameters(), lr=0.01, momentum=0.9)
-
-    for x, y in dataloader:
-        
-        x, x_lens = prepare_x(x)
-
-        optim.zero_grad()
-
-        enc_out = speech_autoenc(x, x_lens)
-
-        # pad the encoder output UP to the maximum batch time frames and 
-        # pad x DOWN to the same number of frames
-        batch_t = max(x_lens)
-        x = x[:, :batch_t, :]
-        enc_final = torch.zeros([enc_out.shape[0], batch_t, enc_out.shape[2]])
-        enc_final[:, :enc_out.shape[1], :] = enc_out
-    
-        loss = loss_metric(enc_final, x)
-
-        # Divide each by length of x and sum, then take the average over the
-        # batch
-        loss = torch.sum(loss.view(loss.shape[0], -1)) / torch.Tensor(x_lens)
-        loss = torch.mean(loss)
-
-        # backprop
-        loss.backward()
-        optim.step()
-
-
-if __name__ == '__main__':
-    test_solver()
