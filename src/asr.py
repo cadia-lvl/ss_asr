@@ -239,8 +239,6 @@ class ASR(nn.Module):
         # beam search init
         final_outputs, prev_top_outputs, next_top_outputs = [], [], []
         
-        # TODO check out this bug
-        # WeirD BUG here if all args. are not passed...
         prev_top_outputs.append(Hypothesis(self.decoder.hidden_state, self.embed, 
             output_seq=[], output_scores=[], lm_state=None)) 
         

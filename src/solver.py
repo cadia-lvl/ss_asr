@@ -28,8 +28,8 @@ from charlm import CharLM
 # Data, processing and tracking imports
 from TrackerHandler import TrackerHandler
 from LogHandler import LogHandler
-from dataset import load_dataset, prepare_x, prepare_y
-from text_dataset import LMDataset, dataload
+from ASRDataset import load_asr_dataset, prepare_x, prepare_y
+from LMDataset import LMDataset, load_lm_dataset
 from postprocess import calc_acc, calc_err, draw_att
 from preprocess import SOS_TKN
 
@@ -146,7 +146,7 @@ class CHARLMTrainer(Solver):
         self.tf_rate = self.config['char_lm']['tf_rate']
 
         # TODO: Use GPU is not used for this dataloader, check if we should
-        self.ds, self.train_set = dataload(self.config['char_lm']['train_index'], 
+        self.ds, self.train_set = load_lm_dataset(self.config['char_lm']['train_index'], 
             self.chunk_size, self.train_batch_size, shuffle=True)
 
     def set_model(self):

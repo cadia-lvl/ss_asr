@@ -2,7 +2,7 @@ import torch
 import yaml
 import numpy as np
 
-from dataset import load_dataset, prepare_x, prepare_y
+from ASRDataset import load_asr_dataset, prepare_x, prepare_y
 from asr import ASR
 from postprocess import trim_eos
 
@@ -24,7 +24,7 @@ def asr_test(asr_cpt: str, index_path: str, conf_path: str):
         device = torch.device('cpu')
 
     config = yaml.load(open(conf_path ,'r'), Loader=yaml.FullLoader)
-    (mapper, _ , train_set) = load_dataset(
+    (mapper, _ , train_set) = load_asr_dataset(
             index_path,
             batch_size=10,
             use_gpu=torch.cuda.is_available())

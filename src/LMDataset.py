@@ -1,4 +1,3 @@
-import random
 import torch
 from torch.utils.data import DataLoader, Dataset
 from preprocess import ALL_CHARS, EOS_TKN, SOS_TKN, TOKENS

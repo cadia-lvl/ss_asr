@@ -4,7 +4,7 @@ import numpy as np
 import matplotlib.pyplot as plt
 import librosa
 from librosa.display import specshow
-from dataset import load_dataset, prepare_x, prepare_y
+from ASRdataset import load_asr_dataset, prepare_x, prepare_y
 
 from preprocess import load_wav, log_fbank
 
@@ -25,7 +25,7 @@ def plt_n_save(x, path):
 
 def specshow_test(index_path='./processed_data/malromur2017/2_5hour.tsv'):
     '''
-    Sanity test for a batch size of 1 , add the dataset to the return of load_dataset
+    Sanity test for a batch size of 1 , add the dataset to the return of load_asr_dataset
     to test
     '''
     N_DIMS = 40
@@ -58,7 +58,7 @@ def specshow_test(index_path='./processed_data/malromur2017/2_5hour.tsv'):
     print(x.shape)
     plt_n_save(x.cpu().numpy(), 'numpy.png')
 
-    mapper , dataset, dataloader = load_dataset(index_path, batch_size=1, text_only=False)
+    mapper , dataset, dataloader = load_asr_dataset(index_path, batch_size=1, text_only=False)
     batch_idx, (x, y) = next(enumerate(dataloader))
     x = torch.from_numpy(dataset.get_fbank(0))
     x = x.unsqueeze(0)
@@ -75,10 +75,10 @@ def specshow_test(index_path='./processed_data/malromur2017/2_5hour.tsv'):
 
 def simple_dataset_test(index_path='data/processed/index.tsv'):
     '''
-    Sanity test for a batch size of 1 , add the dataset to the return of load_dataset
+    Sanity test for a batch size of 1 , add the dataset to the return of load_asr_dataset
     to test
     '''
-    _, dataset, dataloader = load_dataset(index_path, batch_size=1, text_only=True)
+    _, dataset, dataloader = load_asr_dataset(index_path, batch_size=1, text_only=True)
 
     for batch_idx, data in enumerate(dataloader):
         for i in range(data.shape[0]):
@@ -86,9 +86,9 @@ def simple_dataset_test(index_path='data/processed/index.tsv'):
 
 def test_drop_func(index_path='data/processed/index.tsv'):
     batch_size = 2
-    _, dataset, noised_dataloader = load_dataset(index_path, 
+    _, dataset, noised_dataloader = load_asr_dataset(index_path, 
         text_only=True, batch_size=batch_size, drop_rate=0.2)
-    _, dataset, normal_dataloader = load_dataset(index_path, 
+    _, dataset, normal_dataloader = load_asr_dataset(index_path, 
         text_only=True, batch_size=batch_size, drop_rate=0.0)
 
     idx, normal_data  =  next(enumerate(normal_dataloader))
@@ -111,7 +111,7 @@ def simple_shape_check(index_path='data/processed/index.tsv'):
     '''
     Just for checking shapes of things
     '''
-    dataloader = load_dataset(index_path, batch_size=32)
+    dataloader = load_asr_dataset(index_path, batch_size=32)
     _ , data = next(enumerate(dataloader))
     
     print(data[0].shape)
@@ -127,7 +127,7 @@ def test_simple_lm(index_path, lm_path, conf_path):
     Performs a simple sanity LM test on a single sample, given some
     dataset.
     '''
-    (mapper, dataset, dataloader) = load_dataset(index_path, text_only=True)
+    (mapper, dataset, dataloader) = load_asr_dataset(index_path, text_only=True)
    
     batch_idx, data = next(enumerate(dataloader))
     data = data.long()

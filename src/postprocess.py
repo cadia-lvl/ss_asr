@@ -121,6 +121,8 @@ def calc_err(predict, label, mapper):
     return sum(ds)/len(ds)
 
 # Only draw first attention head
+# TODO: Change this to the more simpler loghandler.figure style
+# as in SAETrainer
 def draw_att(att_maps, hyps):
     '''
     Input arguments:
