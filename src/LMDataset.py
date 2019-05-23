@@ -65,7 +65,7 @@ class LMDataset(Dataset):
         return (chunk[:-1], chunk[1:]), (self.s2oh(chunk[:-1]).to(self.device),
             self.s2l(chunk[1:]).to(self.device))
 
-def dataload(filename, chunk_size, batch_size, shuffle=True):
+def load_lm_dataset(filename, chunk_size, batch_size, shuffle=True):
     '''
     The dataloader returns batches where the batch dimension comes first,
     i.e. x.shape = [batch_size, chunk_size]

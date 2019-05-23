@@ -32,6 +32,7 @@ parser.add_argument('--seed', default=1, type=int,
     help='Random seed for reproducable results.', required=False)
 parser.add_argument('--verbose', default=True, 
     type=bool, required=False)
+parser.add_argument('--sanity', default=False)
 
 paras = parser.parse_args()
 
@@ -48,5 +49,9 @@ if torch.cuda.is_available(): torch.cuda.manual_seed_all(paras.seed)
 trainer = type_map[paras.type](config,paras)
 trainer.load_data()
 trainer.set_model()
-trainer.exec()
-trainer.close()
+
+if paras.sanity:
+    trainer.sanity_test()
+else:
+    trainer.exec()
+    trainer.close()

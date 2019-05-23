@@ -49,7 +49,6 @@ class SpeechAutoEncoder(nn.Module):
         # encoder_out shape: [batch, 1, 1, self.encoder.out_dim]
         encoder_out = self.encoder(x.unsqueeze(1))
         # reshape into [batch, encoder.out_dim]
-        encoder_out = encoder_out.squeeze()
         
         predict_seq = []
         # concatenate the two outputs
@@ -136,10 +135,15 @@ class SpeechEncoder(nn.Module):
         '''
         Input arguments: 
         * x:  A [batch_size, seq, feature_dim] tensor filterbank
+        Returns:
+        * x: A [batch_size, self.out_dim, 1, 1]
         '''
         x = self.conv_1(x)
         x = self.conv_2(x)
         x = self.conv_3(x)
+        # x shape : [bs, out_dim, 1, 1]
+        # squeeze out the last two
+        x = x.squeeze(2).squeeze(2)
         return x
         
 class SpeechDecoder(nn.Module):

@@ -117,59 +117,10 @@ def simple_shape_check(index_path='data/processed/index.tsv'):
     print(data[0].shape)
     print(data[1].shape)
 
-'''
-
-'''
-def test_simple_lm(index_path, lm_path, conf_path):
-    from lm import LM
-    import torch.nn.functional as F
-    '''
-    Performs a simple sanity LM test on a single sample, given some
-    dataset.
-    '''
-    (mapper, dataset, dataloader) = load_asr_dataset(index_path, text_only=True)
-   
-    batch_idx, data = next(enumerate(dataloader))
-    data = data.long()
-
-    config = yaml.load(open(conf_path,'r'), Loader=yaml.FullLoader)
-
-    lm = LM(mapper.get_dim(), **config['rnn_lm']['model_para'])
-    lm.load_state_dict(torch.load(lm_path))
-    
-    lm_hidden = None
-    corrects = 0
-    
-    for i in range(1, data.shape[2]):
-        current_char = data[:, :, i]
-        if i + 1 < data.shape[2]:
-            next_char = data[:, :, i+1]
-
-        lm_hidden, lm_out = lm(current_char, [1], lm_hidden)
-        #print(F.softmax(lm_out.view(lm_out.shape[2])))
-        #print(F.softmax(lm_out))
-        prediction = dataset.idx2char(torch.argmax(lm_out).item())
-        
-        current_char = dataset.idx2char(data[0, 0, i].item())
-        if i+1  < data.shape[2]: 
-            next_char = dataset.idx2char(data[0, 0, i+1].item())
-            x = ' '            
-            if next_char == prediction:
-                x = 'X'
-
-            print('current: {0}, next: {1}, prediction: {2}, [{3}]'
-                .format(current_char, next_char, prediction, x))
-
-            if next_char == prediction: corrects += 1
-    
-    print('The model had accuracy of {}%'.format(100*corrects/data.shape[2]))
-
-
 def check_yaml(path='./conf/asr_confs/default.yaml'):
     config = yaml.load(open(path,'r'), Loader=yaml.FullLoader)
 
     print(config)
-
 
 if __name__  == '__main__':
     specshow_test()

@@ -45,6 +45,8 @@ class ASR(nn.Module):
 
         self.tf_rate = tf_rate
 
+        # In terms of loading a model, this is ok since we load
+        # the trained weights after doing this initalization
         self.init_parameters()
     
     def forward(self, audio_feature, decode_step, teacher=None, 

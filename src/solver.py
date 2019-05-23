@@ -16,7 +16,6 @@ from librosa.display import specshow
 
 import matplotlib.pyplot as plt
 from joblib import Parallel, delayed
-from tqdm import tqdm
 
 # Import modules
 from asr import ASR
@@ -43,6 +42,7 @@ class Solver:
         self.config = config
         self.paras = paras
         self.module_id = module_id
+        self.sanity = self.paras.sanity
         
         if torch.cuda.is_available(): 
             self.device = torch.device('cuda') 
@@ -78,6 +78,7 @@ class Solver:
         self.train_batch_size = self.set_if_exists('train_batch_size', 32)
         self.valid_batch_size = self.set_if_exists('valid_batch_size', 32)
         self.test_batch_size = self.set_if_exists('test_batch_size', 1)
+        self.sanity_steps = self.set_if_exists('sanity_steps', 1000)
 
         self.verbose_summary()
 
@@ -129,7 +130,6 @@ class Solver:
         * model_para: Any number of keyword arguments passed to the module 
         '''
         model = module(*para, **model_para)
-
         if os.path.isfile(ckp_path):
             self.verbose('Loading a pretrained model from {}'.format(ckp_path))
             model.load_state_dict(torch.load(ckp_path))
@@ -145,14 +145,22 @@ class CHARLMTrainer(Solver):
         self.chunk_size = self.config['char_lm']['chunk_size']
         self.tf_rate = self.config['char_lm']['tf_rate']
 
+        if self.sanity:
+            self.chunk_size = 10
+            self.train_batch_size = 1
+
         # TODO: Use GPU is not used for this dataloader, check if we should
         self.ds, self.train_set = load_lm_dataset(self.config['char_lm']['train_index'], 
             self.chunk_size, self.train_batch_size, shuffle=True)
 
     def set_model(self):
         self.loss_metric = nn.CrossEntropyLoss(reduction='none').to(self.device)
-
-        self.lm = self.setup_module(CharLM, self.ckppath, self.ds.get_num_chars(),            
+        
+        if self.sanity:
+            self.lm = CharLM(self.ds.get_num_chars(), 
+                self.config['char_lm']['hidden_size']).to(self.device)
+        else:
+            self.lm = self.setup_module(CharLM, self.ckppath, self.ds.get_num_chars(),            
             self.config['char_lm']['hidden_size'])
         
         # setup optimizer
@@ -161,6 +169,37 @@ class CHARLMTrainer(Solver):
         self.optim = self.optim(self.lm.parameters(), 
             lr=self.config['char_lm']['optimizer']['learning_rate'], eps=1e-8)
     
+    def sanity_test(self):
+        _ , ((s_x, s_y), (x, y)) = next(enumerate(self.train_set))
+        
+        for it in range(self.sanity_steps):
+            self.lm.zero_grad()
+            loss = 0
+            last_char = torch.zeros((self.train_batch_size)).to(self.device) # <SOS> for whole batch
+            # get inital hidden states
+            (h_1, h_2) = self.lm.init_hidden(self.train_batch_size, self.device)
+            # step over the whole sequence
+            for i in range(self.chunk_size):
+                # out.shape = [batch_size, char_dim]
+                out, (h_1, h_2) = self.lm(last_char, h_1, h_2)
+                label = y[:, i] # [batch size]
+                loss += self.loss_metric(out, label.long())
+                
+                if random.random() <= self.tf_rate:
+                    last_char = label.to(self.device)
+                else:
+                    # sample from previous prediction
+                    last_char = Categorical(F.softmax(out, dim=-1)).sample() # [bs]
+                    last_char = last_char.to(self.device)
+            # take the mean over samples in batch
+            loss = torch.mean(loss)
+            loss.backward()
+            self.grad_clip(self.lm.parameters(), self.optim)
+
+            self.verbose("Loss at step ({}/{}) is : {:.4f}".format(
+                it+1, self.sanity_steps,loss.item()), progress=True)
+            self.lg.scalar('sanity', loss, it)
+
     def exec(self):
         self.verbose('Training set total {} batches.'.format(len(self.train_set)))
         epoch = 0
@@ -248,7 +287,7 @@ class CHARLMTrainer(Solver):
         
         # The last character of 'start' is the first input
         # for the rest of predicting, shape: [1, 1, features]
-        x = x[-1]#.view(-1)
+        x = x[-1].view(-1)
         for i in range(length):
             out, (h_1, h_2) = self.lm(x, h_1, h_2)
             # first, create a probability distribution over characters
@@ -286,11 +325,14 @@ class ASRTrainer(Solver):
         Load date for training/validation
         Data must be sorted by length of x
         '''
-        (self.mapper, _ ,self.train_set) = load_dataset(
+        if self.sanity:
+            self.train_batch_size = 1
+
+        (self.mapper, _ ,self.train_set) = load_asr_dataset(
             self.config['asr']['train_index'],
             batch_size=self.train_batch_size, use_gpu=self.paras.gpu)
         
-        (_, _, self.valid_set) = load_dataset(
+        (_, _, self.valid_set) = load_asr_dataset(
             self.config['asr']['valid_index'], 
             batch_size=self.valid_batch_size, use_gpu=self.paras.gpu)
 
@@ -302,7 +344,10 @@ class ASRTrainer(Solver):
             reduction='none').to(self.device)
         
         # Build attention end-to-end ASR
-        if asr is None:
+        if self.sanity:
+            self.asr_model = ASR(self.mapper.get_dim(),
+                **self.config['asr']['model_para']).to(self.device)
+        elif asr is None:
             self.asr_model = self.setup_module(ASR, self.ckppath, self.mapper.get_dim(),
                 **self.config['asr']['model_para'])
         else:
@@ -317,6 +362,41 @@ class ASRTrainer(Solver):
 
     def get_asr_model(self):
         return self.asr_model
+
+    def sanity_test(self):
+        _, (x, y) = next(enumerate(self.train_set))
+        (x, x_lens) = prepare_x(x, device=self.device)
+        (y, y_lens) = prepare_y(y, device=self.device)
+
+        for it in range(self.sanity_steps):
+            state_len = x_lens
+            ans_len = max(y_lens) - 1
+
+            # ASR forwarding 
+            self.optim.zero_grad()
+            _, prediction, _ = self.asr_model(x, ans_len, teacher=y, 
+                state_len=state_len)
+
+            # Calculate loss function
+            label = y[:,1:ans_len+1].contiguous()
+    
+            b,t,c = prediction.shape
+
+            # this suspicious view has been shown to work
+            loss = self.seq_loss(prediction.view(b*t,c),label.view(-1))
+            # Sum each uttr and devide by length
+            loss = torch.sum(loss.view(b,t),dim=-1)/torch.sum(y!=0,dim=-1)\
+                .to(device = self.device, dtype=torch.float32)
+            # Mean by batch
+            loss = torch.mean(loss)     
+                            
+            # Backprop
+            loss.backward()
+            self.grad_clip(self.asr_model.parameters(), self.optim)
+
+            self.verbose("Loss at step ({}/{}) is : {:.4f}".format(
+                it+1, self.sanity_steps, loss.item()), progress=True)
+            self.lg.scalar('sanity', loss, it)
 
     def exec(self):
         ''' Training End-to-end ASR system'''
@@ -486,7 +566,7 @@ class ASRTester(Solver):
             'len',str(self.config['asr']['max_decode_step_ratio'])])
 
     def load_data(self):
-        (self.mapper, _ ,self.test_set) = load_dataset(
+        (self.mapper, _ ,self.test_set) = load_asr_dataset(
             self.config['asr']['test_index'],
             batch_size=self.batch_size, use_gpu=self.paras.gpu)
         
@@ -538,24 +618,33 @@ class TAETrainer(Solver):
 
         Also, data must be sorted by length of y
         '''
+        if self.sanity:
+            self.train_batch_size = 1
 
-        (self.mapper, self.dataset, self.train_set) = load_dataset(
+        # TODO: reconsider this data decision, it would be more correct
+        # to use LM dataset instead I think
+        (self.mapper, self.dataset, self.train_set) = load_asr_dataset(
             self.config['tae']['train_index'], batch_size=self.train_batch_size, 
             use_gpu=self.paras.gpu, text_only=True, drop_rate=self.config['tae']['drop_rate'])
 
-        (_, _, self.valid_set) = load_dataset(
+        (_, _, self.valid_set) = load_asr_dataset(
             self.config['tae']['valid_index'], batch_size=self.valid_batch_size, 
             use_gpu=self.paras.gpu, text_only=True, drop_rate=self.config['tae']['drop_rate'])
 
     def set_model(self, asr_model=None):
-        if asr_model is not None:
-            self.asr_model = asr_model
+        if self.sanity:
+            self.text_autoenc = TextAutoEncoder(self.mapper.get_dim(), 
+                **self.config['tae']['model_para']).to(self.device)
+            self.asr_model = ASR(self.mapper.get_dim(), 
+                **self.config['asr']['model_para']).to(self.device)
         else:
-            self.asr_model = self.setup_module(ASR, os.path.join(self.ckpdir, 'asr.cpt'), 
-                self.mapper.get_dim(), **self.config['asr']['model_para'])
-
-        self.text_autoenc = self.setup_module(TextAutoEncoder, self.ckppath,
-            self.mapper.get_dim(), **self.config['tae']['model_para'])        
+            if asr_model is not None:
+                self.asr_model = asr_model
+            else:
+                self.asr_model = self.setup_module(ASR, os.path.join(self.ckpdir, 'asr.cpt'), 
+                    self.mapper.get_dim(), **self.config['asr']['model_para'])
+            self.text_autoenc = self.setup_module(TextAutoEncoder, self.ckppath,
+                self.mapper.get_dim(), **self.config['tae']['model_para'])        
 
         '''
         The optimizer will optimize:
@@ -580,6 +669,36 @@ class TAETrainer(Solver):
 
     def get_tae_model(self):
         return self.text_autoenc
+
+    def sanity_test(self):
+        _, (y, y_noise) = next(enumerate(self.train_set))
+        y, y_lens = prepare_y(y, device=self.device)
+        y_max_len = max(y_lens)
+        y_noise, y_noise_lens = prepare_y(y_noise, device=self.device)
+        y_noise_max_lens = max(y_noise_lens)
+        decode_step = y_max_len 
+       
+        for it in range(self.sanity_steps):
+            self.optim.zero_grad()
+
+            # decode steps == longest target
+            noise_lens, enc_out = self.text_autoenc(self.asr_model, y, y_noise, 
+                decode_step, noise_lens=y_noise_lens)
+            
+            b,t,c = enc_out.shape
+            loss = self.loss_metric(enc_out.view(b*t,c), y.view(-1))
+            # Sum each uttr and devide by length
+            loss = torch.sum(loss.view(b,t),dim=-1)/torch.sum(y!=0,dim=-1)\
+                .to(device=self.device, dtype=torch.float32)
+            
+            # Mean by batch
+            loss = torch.mean(loss)
+            loss.backward()
+            self.grad_clip(self.text_autoenc.parameters(), self.optim)
+
+            self.verbose("Loss at step ({}/{}) is : {:.4f}".format(
+                it+1, self.sanity_steps ,loss.item()), progress=True)
+            self.lg.scalar('sanity', loss, it)
 
     def exec(self):
         self.verbose('Training set total {} batches'.format(len(self.train_set)))
@@ -703,25 +822,34 @@ class SAETrainer(Solver):
     
     def load_data(self):
         # data must be sorted by length of x.
+        if self.sanity:
+            self.train_batch_size = 1
 
-        (self.mapper, _, self.train_set) = load_dataset(
+        (self.mapper, _, self.train_set) = load_asr_dataset(
             self.config['sae']['train_index'], 
             batch_size=self.train_batch_size, use_gpu=self.paras.gpu)
 
-        (_, _, self.valid_set) = load_dataset(
+        (_, _, self.valid_set) = load_asr_dataset(
             self.config['sae']['valid_index'], 
             batch_size=self.valid_batch_size, use_gpu=self.paras.gpu)
     
     def set_model(self, asr_model=None):
-        if asr_model is not None:
-            self.asr_model = asr_model
+        if self.sanity:
+            self.asr_model = ASR(self.mapper.get_dim(), 
+                **self.config['asr']['model_para']).to(self.device)
+            self.speech_autoenc = SpeechAutoEncoder(self.asr_model.encoder.out_dim, 
+                self.config['asr']['model_para']['feature_dim'],
+                **self.config['sae']['model_para']).to(self.device)
         else:
-            self.asr_model = self.setup_module(ASR, os.path.join(self.ckpdir, 'asr.cpt'), 
-                self.mapper.get_dim(), **self.config['asr']['model_para'])
+            if asr_model is not None:
+                self.asr_model = asr_model
+            else:
+                self.asr_model = self.setup_module(ASR, os.path.join(self.ckpdir, 'asr.cpt'), 
+                    self.mapper.get_dim(), **self.config['asr']['model_para'])
 
-        self.speech_autoenc = self.setup_module(SpeechAutoEncoder, self.ckppath, 
-            self.asr_model.encoder.out_dim, self.config['asr']['model_para']['feature_dim'],
-            **self.config['sae']['model_para'])
+            self.speech_autoenc = self.setup_module(SpeechAutoEncoder, self.ckppath, 
+                self.asr_model.encoder.out_dim, self.config['asr']['model_para']['feature_dim'],
+                **self.config['sae']['model_para'])
 
         '''
         The optimizer will optimize:
@@ -735,6 +863,37 @@ class SAETrainer(Solver):
             lr=self.config['sae']['optimizer']['learning_rate'], eps=1e-8)
 
         self.loss_metric = nn.SmoothL1Loss(reduction='none').to(self.device)
+
+    def sanity_test(self):
+        _, (x, y) = next(enumerate(self.train_set))
+        x, x_lens = prepare_x(x, device=self.device)
+
+        for it in range(self.sanity_steps):
+            self.optim.zero_grad()
+
+            # shape is [batch_size, 8*(~seq/8), feature_dim]
+            autoenc_out = self.speech_autoenc(self.asr_model, x, x_lens)
+            # pad the encoder output UP to the maximum batch time frames and 
+            # pad x DOWN to the same number of frames
+            batch_t = max(x_lens)
+            x = x[:, :batch_t, :]
+            enc_final = torch.zeros([autoenc_out.shape[0], batch_t, 
+                autoenc_out.shape[2]]).to(self.device)
+            enc_final[:, :autoenc_out.shape[1], :] = autoenc_out
+            loss = self.loss_metric(enc_final, x)
+
+            # Divide each by length of x and sum, then take the average over the
+            # batch
+            loss = torch.sum(loss.view(loss.shape[0], -1))/torch.Tensor(x_lens)\
+                .to(self.device)
+            loss = torch.mean(loss)
+            loss.backward()
+            self.grad_clip(self.speech_autoenc.parameters(), self.optim)
+
+            self.verbose("Loss at step ({}/{}) is : {:.4f}".format(
+                it+1, self.sanity_steps,loss.item()), progress=True)
+            self.lg.scalar('sanity', loss, it)
+
 
     def exec(self):
         self.verbose('Training set total {} batches.'.format(len(self.train_set)))
@@ -867,12 +1026,12 @@ class ADVTrainer(Solver):
         # data is sorted by length of x
         self.max_step = self.config['adv']['total_steps']
 
-        (self.mapper, self.dataset, self.train_set) = load_dataset(
+        (self.mapper, self.dataset, self.train_set) = load_asr_dataset(
             self.config['adv']['train_index'], 
             batch_size=self.config['adv']['train_batch_size'], 
             use_gpu=self.paras.gpu)
 
-        (_, _, self.valid_set) = load_dataset(
+        (_, _, self.valid_set) = load_asr_dataset(
             self.config['adv']['eval_index'], 
             batch_size=self.config['adv']['valid_batch_size'],
             use_gpu=self.paras.gpu)
