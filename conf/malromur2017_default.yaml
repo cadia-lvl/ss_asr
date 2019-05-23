@@ -17,9 +17,10 @@ asr:
   test_batch_size: 1
   
   n_epochs: 5
-  valid_step: 100 #3000
+  valid_step: 3000
   wer_step: 50
-  save_step: 80
+  save_step: 500
+  logging_step: 1
   sanity_steps: 200
 
   decode_beam_size: 3
