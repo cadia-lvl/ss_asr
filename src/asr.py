@@ -109,7 +109,7 @@ class ASR(nn.Module):
         output_att_seq = torch.stack(output_att_seq, dim=1)
         return encode_len, att_output, output_att_seq
     
-    def decode(self, x, x_len, rnn_lm, mapper):
+    def decode(self, x, x_len, rnn_lm, mapper, lm_weight):
         '''
         This is only used for inference and testing. Both the ASR
         and the supplied LM should be in validation mode.
@@ -120,27 +120,26 @@ class ASR(nn.Module):
         rnn_lm (nn.Module): A language model
         mapper (object): A dataset.mapper instance
         '''
-        lm_weight = 0.5
         curr_device = next(self.decoder.parameters()).device
 
         assert len(x.shape) == 3 and x.shape[0] == 1
-
+        bs = x.shape[0]
         decoding_steps = 0
         max_decoding_steps = 200
         # encode_feature shape : [batch_size, ~seq/8, listener.state_size*2]
         encode_feature, encode_len = self.encoder(x, x_len)
 
         # Init (init char = <SOS>, reset all rnn state and cell)
-        self.decoder.init_rnn(encode_feature.shape[0], encode_feature.device)
+        self.decoder.init_rnn(bs, curr_device)
+        (h1, h2) = rnn_lm.init_hidden(bs, curr_device)
         self.attention.reset_enc_mem()
         batch_size = x.shape[0]
         last_char = self.embed(torch.zeros((batch_size), dtype=torch.long).to(curr_device))
-        last_char_idx = torch.LongTensor([[0]]).to(curr_device)
+        last_char_idx = torch.LongTensor([0]).to(curr_device)
         output_char_seq = []
         output_att_seq = []
         char_predicts = []
         # we keep decoding until <EOS> has been emitted
-        lm_hidden = None
         while decoding_steps < max_decoding_steps:
             # Attend (inputs current state of first layer, encoded features)
             # shapes: attn_score [batch_size, encode_steps]
@@ -151,32 +150,40 @@ class ASR(nn.Module):
             dec_out = self.decoder(decoder_input)
             
             # To char
-            cur_char = F.log_softmax(self.char_trans(dec_out), dim=-1)
-            lm_hidden, lm_out = rnn_lm(last_char_idx, [1], lm_hidden)
-            cur_char += lm_weight * F.log_softmax(lm_out.squeeze(1), dim=-1)
-            predicted_char = torch.argmax(cur_char,dim=-1)
-            last_char_idx = torch.LongTensor([[predicted_char]]).to(curr_device)
-            char_predicts.append(mapper.ind_to_char(predicted_char.item()))
+            asr_predict = F.log_softmax(self.char_trans(dec_out), dim=-1)
+            lm_out, (h1, h2) = rnn_lm(last_char_idx, h1, h2)
+            lm_predict = F.log_softmax(lm_out.squeeze(1), dim=-1)
+            final_predict = asr_predict + lm_weight * lm_predict
+            asr_char = torch.argmax(asr_predict,dim=-1)
+            lm_char = torch.argmax(lm_predict,dim=-1)
+            predicted_char = torch.argmax(final_predict,dim=-1)
+            print("{} vs. {}".format(mapper.ind_to_char(asr_char.item()), 
+                mapper.ind_to_char(lm_char.item()) ))
+            
+            last_char_idx = torch.LongTensor([predicted_char]).to(curr_device)
             last_char = self.embed(predicted_char)
 
-            output_char_seq.append(cur_char)
+            output_char_seq.append(final_predict)
             output_att_seq.append(attention_score.cpu().detach())
 
             if predicted_char.item() == mapper.char_to_ind(EOS_TKN):
-                print("Stopping because of EOS")
+                #print("Stopping because of EOS")
                 break
+
+            char_predicts.append(mapper.ind_to_char(predicted_char.item()))
             
             decoding_steps += 1
 
-        print(''.join(c for c in char_predicts))
 
+        return ''.join(c for c in char_predicts)
+        '''
         att_output = torch.stack(output_char_seq, dim=1)
 
         # shape: [batch_size, encode_steps, decode_steps]
         [batch_size, encode_step, _] = encode_feature.shape 
         output_att_seq = torch.stack(output_att_seq, dim=1)
         return encode_len, att_output, output_att_seq
-
+        '''
     def init_parameters(self):
         def lecun_normal_init_parameters(module):
             for p in module.parameters():
@@ -284,7 +291,6 @@ class ASR(nn.Module):
             final_outputs.sort(key=lambda o: o.avg_score(), reverse=True)
         
         return final_outputs[:decode_beam_size]
-
 
 class Listener(nn.Module):
     def __init__(self, state_size, feature_dim):
@@ -526,6 +532,5 @@ class pBLSTM(nn.Module):
 
 if __name__ == '__main__':
     l = Listener(256, 40)
-    x = torch.randn(32, 200, 40)
-
-    print(l(x, [200 for _ in range(32)])[0].shape)
+    x = torch.randn(32, 8, 40)
+    print(l(x, [8 for _ in range(32)])[0].shape)

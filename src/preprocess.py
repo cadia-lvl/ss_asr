@@ -9,7 +9,7 @@ Will zero-pad the fbansks at the end and sort by original frame length
 '''
 import os
 import re
-from typing import Tuple
+from typing import Tuple, List
 from concurrent.futures import ProcessPoolExecutor
 from functools import partial
 
@@ -194,7 +194,7 @@ def process_pair(text_path: str, wav_path: str, processed_dir: str):
     
     return (clean_text, fbank_path+'.npy', s_len, num_frames, text_path, wav_path)
 
-def log_fbank(y: np.ndarray, sample_rate: int) -> np.ndarray:
+def log_fbank(y: np.ndarray, sample_rate:int) -> np.ndarray:
     '''
     Given a signal and a sample rate, calculate the 
     log mel filterbank of the signal.
@@ -223,7 +223,6 @@ def load_wav(file_path: str) -> Tuple[int, np.ndarray]:
     the sample rate and signal
     '''
     y, sample_rate = load(file_path)
-
     return sample_rate, y
 
 def text_from_file(file_path: str) -> str:
@@ -240,7 +239,8 @@ def normalize_string(s: str, append_tokens=True) -> Tuple[str, int]:
     2. Alphanumerics (a,b,c,..,0,1,2..)
     6. collapse whitespace
     3. Extra: Space, Comma, Period.
-    4. Includes Icelandic special characters (á, ð, é, í, ó, ú, þ, æ, ý, ö)
+    4. Includes Icelandic special characters 
+    (á, ð, é, í, ó, ú, þ, æ, ý, ö)
     5. Other is mapped to <UNK>
 
     returns the normalized string as well as the string length
@@ -251,7 +251,8 @@ def normalize_string(s: str, append_tokens=True) -> Tuple[str, int]:
     s = s.lower()
     s = re.sub(r'\s+', ' ', s) # collapse whitespace
     s_len = len(s) + 2 
-    s = re.sub(r"[^0-9{}]".format(CHARS+ICE_CHARS+SPECIAL_CHARS), UNK_TKN, s)
+    s = re.sub(r"[^0-9{}]".format(CHARS+ICE_CHARS+SPECIAL_CHARS), 
+        UNK_TKN, s)
 
     # pad with <sos> and <eos>
     if append_tokens:
@@ -390,17 +391,5 @@ def subset_by_n(n: int, index: str, out_index: str):
     sampled_df.to_csv(out_index, sep='\t', index=False, header=False)
 
 if __name__ == '__main__':
-    #preprocess('data/ivona_speech_data/ivona_txt', 'data/ivona_speech_data/Kristjan_export', processed_dir='data/ivona_processed')
-    #make_split('./data/processed/index.tsv')
-    #make_split('./data/ivona_processed/index.tsv')
-    #clean_index_text('./data/ivona_processed/index.tsv')
-    #sort_index('./data/ivona_processed/index.tsv', 's_len', sort_ascending=False)
-    #update_slen('./data/ivona_processed/index.tsv')
-    #preprocess_malromur('/data/malromur2017/info.txt', '/data/malromur2017/correct', './processed_data/malromur2017')
-    #subset_by_t(10*60*60, './processed_data/malromur2017/index.tsv', './processed_data/malromur2017/10hour.tsv')
-    
-    #sort_index('./processed_data/malromur2017/10hour.tsv', 'unpadded_num_frames', sort_ascending=False, 
-    #    out_index='./processed_data/malromur2017/production_indexes/10hour_byxlen.tsv')
-    #subset_by_n(1000, './processed_data/malromur2017/index.tsv', './processed_data/malromur2017/production_indexes/1000_eval.tsv')
     sort_index('./processed_data/malromur2017/production_indexes/1000_eval.tsv', 's_len', sort_ascending=False, 
         out_index='./processed_data/malromur2017/production_indexes/1000eval_byylen.tsv')

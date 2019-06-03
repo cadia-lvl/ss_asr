@@ -3,9 +3,14 @@ from torch.utils.data import DataLoader, Dataset
 from preprocess import ALL_CHARS, EOS_TKN, SOS_TKN, TOKENS
 
 class LMDataset(Dataset):
-    def __init__(self, filename, chunk_size, chars:str=TOKENS+ALL_CHARS):
-        self.file = open(filename).read()
-        self.len_file = len(self.file)
+    def __init__(self, filename=None, chunk_size=0, chars:str=TOKENS+ALL_CHARS,
+        label_format=False):
+        self.label_format = label_format
+        self.file = None
+        self.len_file = 0
+        if filename is not None:
+            self.file = open(filename).read()
+            self.len_file = len(self.file)
         self.chunk_size = chunk_size
         self.chars = chars
 
@@ -38,9 +43,14 @@ class LMDataset(Dataset):
         Given a sequence of characters, return the one hot 
         tensor version of the string
         '''
-        out = torch.zeros(len(s), self.get_num_chars())
-        for i in range(len(s)):
-            out[i, self.char2idx[s[i]]] = 1
+        if self.label_format:
+            out = torch.zeros(len(s))
+            for i in range(len(s)):
+                out[i] = self.char2idx[s[i]]
+        else:
+            out = torch.zeros(len(s), self.get_num_chars())
+            for i in range(len(s)):
+                out[i, self.char2idx[s[i]]] = 1
         return out
 
     def get_num_chars(self):
@@ -65,12 +75,12 @@ class LMDataset(Dataset):
         return (chunk[:-1], chunk[1:]), (self.s2oh(chunk[:-1]).to(self.device),
             self.s2l(chunk[1:]).to(self.device))
 
-def load_lm_dataset(filename, chunk_size, batch_size, shuffle=True):
+def load_lm_dataset(filename, chunk_size, batch_size, shuffle=True, label_format=False):
     '''
     The dataloader returns batches where the batch dimension comes first,
     i.e. x.shape = [batch_size, chunk_size]
     '''
-    ds = LMDataset(filename, chunk_size)
+    ds = LMDataset(filename, chunk_size, label_format=label_format)
     dl = DataLoader(ds, batch_size=batch_size, shuffle=shuffle, drop_last=True)
     return ds, dl
 

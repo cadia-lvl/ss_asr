@@ -2,6 +2,7 @@ asr:
   optimizer:
     type: 'Adadelta'                                        # Optimizer used for training (not mentioned in LAS)      
     learning_rate: 1.0                                      # Learning rate for opt (not mentioned in LAS)
+  
   model_para:
     encoder_state_size: 256                                 # The state size of the LSTM used in the encoder (LAS approved)
     mlp_out_size: 128                                       # The dimension projected to by the phi and psi nets
@@ -12,45 +13,48 @@ asr:
   train_index: './processed_data/malromur2017/production_indexes/train_index_byxlen.tsv'
   valid_index: './processed_data/malromur2017/production_indexes/eval_index_byxlen.tsv'
   test_index: './processed_data/malromur2017/production_indexes/100_by_xlen.tsv'
-  train_batch_size: 32
-  valid_batch_size: 32
-  test_batch_size: 1
-  
-  n_epochs: 5
-  valid_step: 3000
-  wer_step: 50
-  save_step: 500
-  logging_step: 1
-  sanity_steps: 200
 
   decode_beam_size: 3
   decode_jobs: 8
   max_decode_step_ratio: 0.25
   decode_lm_weight: 0.5
-  pretrained_lm: '/path/to/pretrained/LM'
+
+  wer_step: 50
+
+  train_batch_size: 32
+  valid_batch_size: 32
+  test_batch_size: 1
+  
+  n_epochs: 150
+  valid_step: 1000
+  save_step: 500
+  logging_step: 1
+  sanity_steps: 200
 
 sae:
   optimizer:
-    type: 'Adadelta'                                        # Optimizer used for training speech auto encoder (Drexler approved)
-    learning_rate: 1.0                                      # Learning rate for opt (Drexler approved)
+    type: 'Adam'                                        # Optimizer used for training speech auto encoder (Drexler approved)
+    learning_rate: 0.0001                                      # Learning rate for opt (Drexler approved)
   model_para:
-    kernel_sizes: [[36, 1], [1, 5], [1, 3]]                 # A list of kernel sizes for the 3 convolutional layers
+    kernel_sizes: [[1, 36], [5, 1], [3, 1]]                 # A list of kernel sizes for the 3 convolutional layers
     num_filters: [32, 64, 256]                              # A list of output filters for the 3 convolutional layers
     pool_kernel_sizes: [[3, 1], [5, 1], [2000, 40]]         # A list of kernel sizes (only 3 values) for the max pooling of each convolutional layer
   
   train_index: './processed_data/malromur2017/production_indexes/train_index_byxlen.tsv'
   valid_index: './processed_data/malromur2017/production_indexes/eval_index_byxlen.tsv'
+  
   train_batch_size: 32
   eval_batch_size: 32
-  
-  valid_step: 100
+  n_epochs: 20
+  valid_step: 1000
+  save_step: 200
   logging_step: 1
   sanity_steps: 200
   
 tae:
   optimizer:
-    type: 'Adadelta'
-    learning_rate: 1.0
+    type: 'Adam'                                        # Optimizer used for training speech auto encoder (Drexler approved)
+    learning_rate: 0.0001                                      # Learning rate for opt (Drexler approved)
   model_para:
     state_size: 256
     emb_dim: 128
@@ -60,38 +64,56 @@ tae:
   train_index: './processed_data/malromur2017/production_indexes/train_index_byxlen.tsv'
   valid_index: './processed_data/malromur2017/production_indexes/eval_index_byxlen.tsv'
 
-  save_step: 200
-  valid_step: 100
+  train_batch_size: 64
+  eval_batch_size: 64
+  n_epochs: 50
+  save_step: 2000
+  valid_step: 1000
   logging_step: 1
 
 adv:
   G_optimizer:
-    type: 'Adadelta'
-    learning_rate: 1.0
+    type: 'Adam'
+    learning_rate: 0.0001
   D_optimizer:
-    type: 'Adadelta'
-    learning_rate: 1.0  
+    type: 'Adam'
+    learning_rate: 0.0001 
   model_para:
     hidden_dim: 256
   label_smoothing: 0.1
-  
+
+  train_index: './processed_data/malromur2017/production_indexes/train_index_byxlen.tsv'
+  eval_index: './processed_data/malromur2017/production_indexes/eval_index_byxlen.tsv'
+
+  lm_train_index: './processed_data/risamalromur/train.txt'
+  chunk_size: 200 
+
+  train_batch_size: 32
+  eval_batch_size: 32
+
+  n_epochs: 30
+  save_step: 1000
+  valid_step: 1000
+  logging_step: 1
+
 char_lm:
-  train_batch_size: 128
-  chunk_size: 200
+  optimizer:
+    type: 'Adam'                                      # Optimizer used for training (not mentioned in LAS)      
+    learning_rate: 0.0001                                 # Learning rate for opt (not mentioned in LAS)
+  model_para:
+    hidden_size: 128
+    tf_rate: 0.9                                            # Teacher forcing rate (LAS approved)
+
   train_index: './processed_data/risamalromur/train.txt'
   valid_index: './processed_data/risamalromur/eval.txt'
-  n_layers: 2
-  hidden_size: 128
+
+  chunk_size: 200
+
+  train_batch_size: 128
   n_epochs: 8
   valid_step: 100
-  tf_rate: 0.9                                            # Teacher forcing rate (LAS approved)
-
   logging_step: 1
   save_step: 50
 
-  optimizer:
-    type: 'Adadelta'                                      # Optimizer used for training (not mentioned in LAS)      
-    learning_rate: 1.0                                    # Learning rate for opt (not mentioned in LAS)
-
-solver:
-  n_jobs: 8                                               # Number of subprocesses used for Dataloader (LAS neutral)
+seed_gen:
+  super_its: 5

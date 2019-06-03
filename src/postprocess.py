@@ -9,8 +9,7 @@ class Hypothesis:
     '''
     Hypothesis for beam search decoding.
     Stores the history of label sequence & score 
-    Stores the previous decoder state, ctc state, ctc score, 
-    lm state.
+    Stores the previous decoder state, lm state.
     '''
     
     def __init__(self, decoder_state, emb, output_seq=[],
@@ -120,6 +119,11 @@ def calc_err(predict, label, mapper):
     
     return sum(ds)/len(ds)
 
+def simple_wer(predict, label):
+    ds = float(ed.eval(predict.split(' '), label.split(' ')))/len(label.split(' ')) 
+    return ds
+
+
 # Only draw first attention head
 # TODO: Change this to the more simpler loghandler.figure style
 # as in SAETrainer
@@ -141,7 +145,12 @@ def trim_eos(sequence):
     new_pred = []
     for char in sequence:
         new_pred.append(int(char))
-        # HACK: 1 maps to '>', generally speaking
+        # HACK: 1 maps to '>', generally speakingn
         if char == 1:
             break
     return new_pred
+
+if __name__ == '__main__':
+    label = 'þetta tauganet er að reyna að skilja texta'
+    predict ='asdasddsa as asdas das das dka ;dska dsas das dhasd '
+    print(simple_wer(predict, label))

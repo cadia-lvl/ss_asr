@@ -10,7 +10,7 @@ asr:
     tf_rate: 0.9                                            # Teacher forcing rate (LAS approved)
     feature_dim: 40                                         # Dimensionality of fbanks (has to be same as used in prepro) (LAS approved)
   
-  train_index: './processed_data/malromur2017/production_indexes/2_5hour_byxlen.tsv'
+  train_index: './processed_data/malromur2017/production_indexes/10hour_byxlen.tsv'
   valid_index: './processed_data/malromur2017/production_indexes/eval_index_byxlen.tsv'
   test_index: './processed_data/malromur2017/production_indexes/100_by_xlen.tsv'
 
@@ -25,7 +25,7 @@ asr:
   valid_batch_size: 32
   test_batch_size: 1
   
-  n_epochs: 240
+  n_epochs: 96
   valid_step: 1000
   save_step: 500
   logging_step: 1

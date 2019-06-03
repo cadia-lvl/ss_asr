@@ -46,12 +46,12 @@ class CharLM(nn.Module):
     def forward(self, x, h_1, h_2):
         '''
         Input arguments:
-        x: A [batch_size, 1] tensor, containing the character input for each
+        x: A [batch_size] tensor, containing the character input for each
         string in the batch
         hidden: The previous hidden state
         '''
         x = self.emb(x.long())
-        h_1 = self.layer_1(x, h_1)
+        h_1 = self.layer_1(x, h_1) # expects input of shape [bs, input_size]
         h_2 = self.layer_2(h_1, h_2)
         out = self.out(h_2)
         return out, (h_1, h_2)

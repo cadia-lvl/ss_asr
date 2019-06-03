@@ -20,9 +20,7 @@ class SpeechAutoEncoder(nn.Module):
         super(SpeechAutoEncoder, self).__init__()
 
         self.feature_dim = feature_dim
-
         self.encoder = SpeechEncoder(kernel_sizes, num_filters, pool_kernel_sizes)
-        
         '''
         The decoder takes as input concatenation of all global 
         encoder output and one step of listener output. It predicts
@@ -31,28 +29,67 @@ class SpeechAutoEncoder(nn.Module):
         self.decoder = SpeechDecoder(
             self.encoder.out_dim+listener_out_dim, 8*feature_dim)
 
-    def forward(self, asr, x, x_len):
+    def forward_elewise(self, x, listener_out):
         '''
         Input arguments:
         * asr (nn.Module): An instance of the src.ASR class
         * x (tensor): A [batch_size, seq, feature] sized tensor, containing
-        a batch of fbanks.
-        * x_len (list): The lengths of each sample (unpadded), must be in
-        descending order.
+        a batch of padded fbanks.
+        * listener_out (tensor): A [batch_size, 1, feature] sized tensor
+        that is the output of the ASR encoder
+
+        Steps:
+        1. Given X, the global encoder will encode the whole utterance of each sample,
+        shaped e.g [bs, global_enc_out]
+
+        2. The input of the decoder is the concat of the whole global encoder output and
+        a single step from the listener encoder, shaped [bs, global_enc_out + lis_out]
+        For the whole batch, we will therefore have created ~seq/8 new batches that
+        are passed on to the decoder
+
         '''
-
-        # ASR-encode the whole batch of utterances
-        # listener_out shape : [batch_size, ~seq/8, listener.out_dim]
-        listener_out, _ = asr.encoder(x, x_len)
-
         # global-encode the whole batch of utterances
         # encoder_out shape: [batch, 1, 1, self.encoder.out_dim]
-        encoder_out = self.encoder(x.unsqueeze(1))
+        encoder_out = self.encoder(x.unsqueeze(1)) # x is now [bs, 1, seq, features]
+        decoder_in = torch.cat((listener_out, encoder_out), dim=1)
+        
+        # shape: [batch_size, 8*self.feature_dim]
+        decoder_out = self.decoder(decoder_in)            
+        decoder_out = decoder_out.view(decoder_out.shape[0], 8, self.feature_dim)
+        return decoder_out
+
+    def forward(self, x, listener_out, just_first=False):
+        '''
+        Input arguments:
+        * asr (nn.Module): An instance of the src.ASR class
+        * x (tensor): A [batch_size, seq, feature] sized tensor, containing
+        a batch of padded fbanks.
+        * listener_out (tensor): A [batch_size, ~seq/8, feature] sized tensor
+        that is the output of the ASR encoder
+        * just_first (bool): Can be used for debugging. If set to true, only
+        the first 8 frames of the ground truth are returned.
+        
+        Steps:
+        1. Given X, the global encoder will encode the whole utterance of each sample,
+        shaped e.g [bs, global_enc_out]
+
+        2. The input of the decoder is the concat of the whole global encoder output and
+        a single step from the listener encoder, shaped [bs, global_enc_out + lis_out]
+        For the whole batch, we will therefore have created ~seq/8 new batches that
+        are passed on to the decoder
+
+        '''
+        # global-encode the whole batch of utterances
+        # encoder_out shape: [batch, 1, 1, self.encoder.out_dim]
+        encoder_out = self.encoder(x.unsqueeze(1)) # x is now [bs, 1, seq, features]
         # reshape into [batch, encoder.out_dim]
         
         predict_seq = []
         # concatenate the two outputs
-        for i in range(listener_out.shape[1]):
+        num = listener_out.shape[1]
+        if just_first:
+            num = 1
+        for i in range(num):
             '''
             Decoder in is the concatenation of a single listener output
             and the complete global-encoder output:
@@ -67,12 +104,13 @@ class SpeechAutoEncoder(nn.Module):
 
             # shape: [batch_size, 8*self.feature_dim]
             decoder_out = self.decoder(decoder_in)
-            # shape: [batch_size, 8, self.feature_dim]
+            
             '''
-            This susspicious .view() has been verified, that is
+            This suspicious .view() has been verified, that is
             decoder_out[i, j, k] represents the k-th frequency band
             of the j-th frame in the i-th sample
             '''
+            # shape: [batch_size, 8, self.feature_dim]
             decoder_out = decoder_out.view(decoder_out.shape[0], 8, self.feature_dim)
             
             predict_seq.append(decoder_out)
@@ -81,6 +119,7 @@ class SpeechAutoEncoder(nn.Module):
         # is the maximum length of the current batch (comes about b.c. of packing) 
         out = torch.cat(predict_seq, dim=1)
         return out
+
 
 class SpeechEncoder(nn.Module):
     def __init__(self, ks, num_filters, pool_ks):
@@ -92,12 +131,14 @@ class SpeechEncoder(nn.Module):
         the 3 convolutional layers
         * pool_ks (List): A list of kernel sizes (only 3 values) for
         the max pooling of each convolutional layer
+
+        kernel_sizes: [[36, 1], [1, 5], [1, 3]]    
+        num_filters: [32, 64, 256]      
+        pool_kernel_sizes: [[3, 1], [5, 1], [2000, 40]]
+
         '''
-
         super(SpeechEncoder, self).__init__()
-
         assert len(ks) == 3 and len(num_filters) == 3
-        
         self.out_dim = num_filters[-1]
 
         # in : (batch_size, seq, feature_dim)
@@ -106,6 +147,7 @@ class SpeechEncoder(nn.Module):
                 in_channels=1,
                 out_channels=num_filters[0],
                 kernel_size=ks[0],
+                padding=0,
                 bias=False),
             nn.BatchNorm2d(num_features=num_filters[0]),
             nn.ReLU(),
@@ -116,6 +158,7 @@ class SpeechEncoder(nn.Module):
                 in_channels=num_filters[0],
                 out_channels=num_filters[1],
                 kernel_size=ks[1],
+                padding=0,
                 bias=False),
             nn.BatchNorm2d(num_features=num_filters[1]),
             nn.ReLU(),
@@ -126,6 +169,7 @@ class SpeechEncoder(nn.Module):
                 in_channels=num_filters[1],
                 out_channels=num_filters[2],
                 kernel_size=ks[2],
+                padding=0,
                 bias=False),
             nn.BatchNorm2d(num_features=num_filters[2]),
             nn.ReLU(),
@@ -169,26 +213,12 @@ class SpeechDecoder(nn.Module):
         (Expected output: [batch_size, 8, feature_dim])
         '''
         super(SpeechDecoder, self).__init__()
-
-
-        #self.leaky_1 = nn.LeakyReLU()
-        #self.leaky_2 = nn.LeakyReLU()
-        '''
-        self.leaky_1 = nn.Sequential(
-            nn.Linear(in_dim, in_dim),
-            nn.LeakyReLU())
-        self.leaky_2 = nn.Sequential(
-            nn.Linear(in_dim, in_dim),
-            nn.LeakyReLU())
-        self.out = nn.Linear(in_dim, out_dim)
-        '''
         self.core = nn.Sequential(
             nn.Linear(in_dim, in_dim),
             nn.LeakyReLU(),
             nn.Linear(in_dim, in_dim),
             nn.LeakyReLU(),
-            nn.Linear(in_dim, out_dim)
-        )
+            nn.Linear(in_dim, out_dim))
     
     def forward(self, x):
         '''
@@ -201,3 +231,19 @@ class SpeechDecoder(nn.Module):
         original frames of input fbanks.
         '''
         return self.core(x)
+
+if __name__ == '__main__':
+    kernel_sizes= [[1, 36], [5, 1], [3, 1]]    
+    num_filters=[32, 64, 256]      
+    pool_kernel_sizes=[[3, 1], [5, 1], [2000, 40]]
+    
+    '''
+    encoder = AltSpeechEncoder(30, n_filters=40)
+    example_data = torch.randn(32, 1, 19, 40)
+    
+    out = encoder(example_data)
+    print(out.shape)
+    '''
+
+    speech_enc = SpeechAutoEncoder(512, 40, kernel_sizes, num_filters, pool_kernel_sizes)
+    speech_enc(example_data)
