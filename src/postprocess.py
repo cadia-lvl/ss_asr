@@ -26,7 +26,6 @@ class Hypothesis:
                 
         # Embedding layer for last_char
         self.emb = emb
-        
 
     def avg_score(self):
         '''
@@ -123,6 +122,21 @@ def simple_wer(predict, label):
     ds = float(ed.eval(predict.split(' '), label.split(' ')))/len(label.split(' ')) 
     return ds
 
+def simple_acc(predict, label):
+    '''
+    Input arguments:
+    * predict: A [batch_size, seq_len, char_dim] tensor, representing
+    the prediction made for the label
+    * label:  A [batch_size, seq_len] of mapped characters to indexes
+
+    Returns the character-level accuracy of the prediction for 
+    the whole batch.
+    '''
+    correct = 0.0
+    total_char = 0
+    for p,l in zip(predict,label):
+        correct += int(p==l)
+    return correct/len(predict)
 
 # Only draw first attention head
 # TODO: Change this to the more simpler loghandler.figure style
@@ -151,6 +165,6 @@ def trim_eos(sequence):
     return new_pred
 
 if __name__ == '__main__':
-    label = 'þetta tauganet er að reyna að skilja texta'
-    predict ='asdasddsa as asdas das das dka ;dska dsas das dhasd '
+    label = 'hægindi'
+
     print(simple_wer(predict, label))

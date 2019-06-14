@@ -655,7 +655,18 @@ class ASRTester(Solver):
             # TODO: we are using simple decoding, not beam decoding
             results.append(self.asr_model.decode(x, x_len, self.lm, self.mapper, lm_weight))
         return results
-    
+
+    def beam_decode(self, infer_lengths=False):
+        '''
+        Batch size is set at one by default
+        
+        Input arguments:
+        * infer_lengths:bool (default False). If set to True, model keeps predicting
+        until <EOS>
+        '''
+        b_idx, (x, y) = next(enumerate(self.test_set))
+
+
 class TAETrainer(Solver):
     '''
     Train the Text AutoEncoder
@@ -1410,17 +1421,10 @@ class ADVTrainer(Solver):
         self.lg.scalar('discrim_real_loss_eval', avg_real_loss, self.tr.step)
         self.lg.scalar('discrim_fake_loss_eval', avg_fake_loss, self.tr.step)
         self.lg.scalar('discrim_loss_eval', avg_loss, self.tr.step)
-        if n_batches == 0:
-            self.verbose('Validation Batch size ({}) too large for dataset, decrease !'
-                .format(self.valid_batch_size))
-            avg_loss = 0
-        else:
-            avg_loss /=  n_batches
-            avg_loss = avg_loss.item()      
+         
         if avg_loss < self.tr.get_best():
             # then we save the model
-            self.tr.set_best(avg_loss)
-
+            self.tr.set_best(avg_loss.item())
             self.verbose('Best validation loss : {:.4f} @ global step {}'
                 .format(self.tr.get_best(), self.tr.step))
             torch.save(self.discriminator.state_dict(), self.best_ckppath)

@@ -223,6 +223,52 @@ class ASR(nn.Module):
         set_forget_bias_to_one(self.decoder.layer_1.bias_ih)
         set_forget_bias_to_one(self.decoder.layer_2.bias_ih)
 
+    def beam_decode(self, enc_out, enc_len, max_decode_steps, beam_width=5,
+        charlm=None, lm_weight=0.0):
+        '''
+        Input arguments:
+        * enc_out (Tensor): The output of self.encoder(x)
+        * enc_len (list): The unpadded length output of self.encoder(x)
+        * max_decode_steps (int): The maximum number of decoding steps. We will
+        force encoding to stop at that step in case it has not emitted <eos> for
+        all hypothesis in beam.
+        * beam_width (int): The number of hypothesis to consider at each level
+        of beam search.
+        * charlm (nn.Module): A CharLM model
+        * lm_weight (float): Parameter that determines the influence of the
+        language model during beam rescoring
+        '''
+
+        for t in range(max_decode_steps):
+            # iterate over hypthesis in beam
+            for hyp in best_hyps:
+                # set decoder hidden state of self to that of the hypothesis
+                self.encoder.hidden_state = hyp.get_asr_hidden()
+
+                # calculate attention for the current hypothesis at the current
+                # timestep
+                attention_score, context = self.attention(
+                    self.decoder.state_list[0], encode_feature, encode_len)
+
+                # Spell (inputs context + embedded last character)                
+                decoder_input = torch.cat([hyp.get_last_char(), context], dim=-1)
+                dec_out = self.decoder(decoder_input)
+                print(dec_out.shape)
+                # To char
+                cur_char = self.char_trans(dec_out)
+                cur_char = F.log_softmax(cur_char, dim=-1) # softmax over characters
+
+                # rescore beams with charlm
+                if charlm is not None and lm_weight > 0.0:
+                    lm_out, lm_hidden = charlm(hyp.get_last_char_idx(), hyp.get_lm_hidden())
+                    
+                    # add LM prediction to complete prediction
+                    print(lm_out.shape)
+                    cur_char +=  self.lm_weight * F.log_softmax(lm_out.squeeze, dim=-1)
+
+
+
+
     def beam_decode(self, audio_feature, decode_step, state_len, decode_beam_size, rnn_lm=None,
         decode_lm_weight=0):
         '''
@@ -332,6 +378,7 @@ class Listener(nn.Module):
 
         Output:
         * x (Tensor): A [batch_size, seq/8, state_size*2] shaped tensor
+        * state_len (list): The unpadded lengths of each feature
         '''
         x, _, state_len = self.blstm_1(x, state_len=state_len, 
             pack_input=pack_input)
