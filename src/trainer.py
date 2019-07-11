@@ -31,7 +31,7 @@ VAL_STEP = 30
 TRAIN_WER_STEP = 250
 GRAD_CLIP = 5
 
-class Solver:
+class Trainer:
     ''' Super class Solver for all kinds of tasks'''
     def __init__(self, config, paras, module_id):
         self.config = config
@@ -142,7 +142,7 @@ class Solver:
 
         return model.to(self.device)
 
-class ASRTrainer(Solver):
+class ASRTrainer(Trainer):
     ''' Handler for complete training progress'''
     def __init__(self, config, paras):
         super(ASRTrainer, self).__init__(config, paras , 'asr')
@@ -175,7 +175,7 @@ class ASRTrainer(Solver):
             self.asr_model = self.setup_module(ASR, self.ckppath, self.mapper.get_dim(),
                 **self.config['asr_model']['model_para'])
         else:
-            # a pretrained model has been passed to the solver.
+            # a pretrained model has been passed to the trainer.
             self.asr_model = asr
         
         # setup optimizer
@@ -338,7 +338,7 @@ class ASRTrainer(Solver):
 
         self.asr_model.train()
     
-class ASRTester(Solver):
+class ASRTester(Trainer):
     ''' Handler for complete inference progress'''
     def __init__(self, config, paras):
         super(ASRTester, self).__init__(config, paras, 'asr_test')
@@ -428,7 +428,7 @@ class ASRTester(Solver):
         
         return 1
 
-class SAETrainer(Solver):
+class SAETrainer(Trainer):
     '''
     Train the Speech AutoEncoder.
 
@@ -575,7 +575,7 @@ class SAETrainer(Solver):
         self.speech_autoenc.train()
         self.asr_model.train() 
                    
-class TAETrainer(Solver):
+class TAETrainer(Trainer):
     '''
     Train the Text AutoEncoder
     '''
@@ -740,7 +740,7 @@ class TAETrainer(Solver):
         self.text_autoenc.train()
         self.asr_model.train() 
 
-class AdvTrainer(Solver):
+class AdvTrainer(Trainer):
     '''
     Do adversarial training on both the Discriminator and
     the Generator (Listener) using the Text encoder as a 
@@ -935,7 +935,7 @@ class AdvTrainer(Solver):
 
         self.discriminator.train()
 
-class LMTrainer(Solver):
+class LMTrainer(Trainer):
     ''' Trainer for RNN-LM only'''
     def __init__(self, config, paras):
         super(LMTrainer, self).__init__(config, paras, 'rnn_lm')
@@ -1043,43 +1043,3 @@ class LMTrainer(Solver):
             torch.save(self.rnnlm.state_dict(), self.ckppath)
 
         self.rnnlm.train()
-
-'''
-SuperSolver combines every training solver in src.solver.py and runs each
-in turns. The asr core is only saved when it's evaluation loss is decreased
-'''
-class SuperSolver:
-    def __init__(self, config, paras):
-        
-        self.config = config
-        self.paras = paras
-
-        self.asr_solver = ASRTrainer(self.config, self.paras)
-        self.asr_solver.load_data()
-        self.asr_solver.set_model()
-        self.asr_model = self.asr_solver.get_asr_model()
-
-        self.tae_solver = TAETrainer(self.config, self.paras)
-        self.tae_solver.load_data()
-        self.tae_solver.set_model(asr_model=self.asr_model)
-        self.tae_model = self.tae_solver.get_tae_model()
-        
-        self.sae_solver = SAETrainer(self.config, self.paras)
-        self.sae_solver.load_data()
-        self.sae_solver.set_model(asr_model=self.asr_model)
-
-        self.adv_solver = AdvTrainer(self.config, self.paras)
-        self.adv_solver.load_data()
-        self.adv_solver.set_model(asr_model=self.asr_model, tae_model=self.tae_model)
-
-        self.superloops = 5
-
-    def exec(self):
-        # each solver takes care of logging, evaluating, checkpointing
-        # and so on
-        for i in range(self.superloops):
-            print('Starting superloop #{}'.format(i+1))
-            self.asr_solver.exec()
-            self.tae_solver.exec()
-            self.sae_solver.exec()
-            self.adv_solver.exec()

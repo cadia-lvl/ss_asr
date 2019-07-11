@@ -1,19 +1,6 @@
-'''
-This script preprocesses a speech-text corpora according to
-the specification in the original Listen, Attend & Spell paper.
-Given a dataset in some format located under data/[dataset_name],
-a new formatted dataset will be created under data/preprocessed.
-For now, this script assumes that the text files are stored in seperate
-TEXT_XTSN files and audio files stored in seperate .wav files.
-Will zero-pad the fbansks at the end and sort by original frame length
-'''
-
-'''
-    TODO: Currently does not catch IO exceptions and will fail writing the index
-    in those cases. Should fix that or concurrently write the index.
-'''
 import os
 import re
+import argparse
 from typing import Tuple
 from concurrent.futures import ProcessPoolExecutor
 from functools import partial
@@ -22,6 +9,7 @@ import numpy as np
 import pandas as pd
 import scipy.io.wavfile as wav
 from tqdm import tqdm
+import yaml
 
 from librosa.core import load, power_to_db
 from librosa.feature import melspectrogram
@@ -29,30 +17,21 @@ import librosa
 
 CHARS = 'abcdefghijklmnoprstuvxy0123456789'
 ICE_CHARS = 'áéíóúýæöþð'
-# TODO: Seems it is standard to omitt the question mark
-# so perhaps we should just remove it from the text during
-# preprocessing. (The '.' is prolly very helpful for predicting
-# when to emmitt the <EOS>)
 SPECIAL_CHARS = ' .,?'
 ALL_CHARS = CHARS + ICE_CHARS + SPECIAL_CHARS
-
-
-SOS_TKN = '<' 
 # The SOS will also be used to pad target texts to maximum length
 # which is fine since we give the loss function the command to never
 # care about this token
-
+SOS_TKN = '<' 
 EOS_TKN = '>'
 UNK_TKN = '$'
 TOKENS = SOS_TKN + EOS_TKN + UNK_TKN
 
-N_JOBS = 12
-
-N_DIMS = 40
-WIN_SIZE = 25
-STRIDE = 10
-TEXT_XTSN = '.txt'
-
+N_JOBS = 12 # no. jobs to run in parallel when writing the index
+N_DIMS = 40 # no. frequency coefficients in the spectrograms
+WIN_SIZE = 25 # size of window in STFT
+STRIDE = 10 # stride of the window
+TEXT_XTSN = '.txt' # extension of token files (if applicable)
 
 def preprocess(txt_dir: str, wav_dir: str, processed_dir: str=None):
     if processed_dir is None:
@@ -62,34 +41,6 @@ def preprocess(txt_dir: str, wav_dir: str, processed_dir: str=None):
     os.makedirs(fbank_dir, exist_ok=True)
 
     lines = iterate_by_ids(txt_dir, wav_dir, processed_dir)
-    print('Sorting by frame length...')
-    lines = sorted(lines, key=lambda x: x[3])
-    max_len = lines[-1][3]
-    print('Iterating files ...')
-    with open(os.path.join(processed_dir, 'index.tsv'), 'w', encoding='utf-8') as f:
-        for line in lines:
-            '''
-            Layout of index
-            normalized_text, path_to_fbank, s_len, unpadded_num_frames, text_fname, wav_fname
-            '''
-            f.write('\t'.join([str(attr) for attr in line]) + '\n')
-            
-    print('Featurebanks have been computed, now zero-padding (max_len={})...'.format(max_len))
-    for line in lines:
-        fbank_path = line[1]
-        fbank = np.load(fbank_path)
-        np.save(fbank_path, zero_pad(fbank, max_len))
-    print('Finished zero-padding.')
-
-
-def preprocess_malromur(index: str, wav_dir: str, processed_dir: str=None):
-    if processed_dir is None:
-        processed_dir = os.path.join('data', 'processed')
-    fbank_dir = os.path.join(processed_dir, 'fbanks')
-    os.makedirs(processed_dir, exist_ok=True)
-    os.makedirs(fbank_dir, exist_ok=True)
-
-    lines = iterate_malromur_index(index, wav_dir, processed_dir)
     print('Sorting by frame length...')
     lines = sorted(lines, key=lambda x: x[3])
     max_len = lines[-1][3]
@@ -129,6 +80,58 @@ def iterate_by_ids(txt_dir: str, wav_dir: str,  processed_dir: str):
 
     return [future.result() for future in tqdm(futures) if future.result() is not None]
 
+
+def process_pair(text_path: str, wav_path: str, processed_dir: str):
+    # process text
+    raw_text = text_from_file(text_path)
+    clean_text, s_len = normalize_string(raw_text)
+
+    # process audio
+    try:
+        sample_rate, y = load_wav(wav_path)
+    except:
+        print("Error reading wav: {}. Sample is ommitted.".format(wav_path))
+        return None
+    fbank = log_fbank(y, sample_rate)
+
+    num_frames = fbank.shape[0]
+
+    # save filterbank under <processed_dir>/fbanks/file_id.npy
+    fbank_path = os.path.join(processed_dir, 'fbanks', 
+        os.path.splitext(os.path.basename(text_path))[0])
+    np.save(fbank_path, fbank)
+    
+    return (clean_text, fbank_path+'.npy', s_len, num_frames, text_path, wav_path)
+
+def preprocess_malromur(index: str, wav_dir: str, processed_dir: str=None):
+    '''
+    Needs documentation
+    '''
+    if processed_dir is None:
+        processed_dir = os.path.join('data', 'processed')
+    fbank_dir = os.path.join(processed_dir, 'fbanks')
+    os.makedirs(processed_dir, exist_ok=True)
+    os.makedirs(fbank_dir, exist_ok=True)
+
+    lines = iterate_malromur_index(index, wav_dir, processed_dir)
+    print('Sorting by frame length...')
+    lines = sorted(lines, key=lambda x: x[3])
+    max_len = lines[-1][3]
+    print('Iterating files ...')
+    with open(os.path.join(processed_dir, 'index.tsv'), 'w', encoding='utf-8') as f:
+        for line in lines:
+            '''
+            Layout of index
+            normalized_text, path_to_fbank, s_len, unpadded_num_frames, text_fname, wav_fname
+            '''
+            f.write('\t'.join([str(attr) for attr in line]) + '\n')
+            
+    print('Spectrograms have been computed, now zero-padding (max_len={})...'.format(max_len))
+    for line in lines:
+        fbank_path = line[1]
+        fbank = np.load(fbank_path)
+        np.save(fbank_path, zero_pad(fbank, max_len))
+    print('Finished zero-padding.')
 
 def iterate_malromur_index(index_path: str, wav_dir: str, processed_dir: str):
     '''
@@ -181,27 +184,6 @@ def process_malromur_pair(text: str, wav_path: str, processed_dir: str):
     # we return 'na' as text_path to comply with other stuff
     return (clean_text, fbank_path+'.npy', s_len, num_frames, 'na', wav_path)
 
-def process_pair(text_path: str, wav_path: str, processed_dir: str):
-    # process text
-    raw_text = text_from_file(text_path)
-    clean_text, s_len = normalize_string(raw_text)
-
-    # process audio
-    try:
-        sample_rate, y = load_wav(wav_path)
-    except:
-        print("Error reading wav: {}. Sample is ommitted.".format(wav_path))
-        return None
-    fbank = log_fbank(y, sample_rate)
-
-    num_frames = fbank.shape[0]
-
-    # save filterbank under <processed_dir>/fbanks/file_id.npy
-    fbank_path = os.path.join(processed_dir, 'fbanks', 
-        os.path.splitext(os.path.basename(text_path))[0])
-    np.save(fbank_path, fbank)
-    
-    return (clean_text, fbank_path+'.npy', s_len, num_frames, text_path, wav_path)
 
 def log_fbank(y: np.ndarray, sample_rate: int) -> np.ndarray:
     '''
@@ -302,7 +284,7 @@ def make_split(index:str, train_r:float=0.9, eval_r:float=0.1):
     indexes at the same path as the
     original index.
     '''
-    assert (train_r + eval_r == 1.0), "Ratios must equate 1.0"
+    assert (train_r + eval_r == 1.0), "Ratios must sum to 1.0"
     
     frame = pd.read_csv(index, sep='\t')
     msk = np.random.rand(len(frame)) < train_r
@@ -314,21 +296,6 @@ def make_split(index:str, train_r:float=0.9, eval_r:float=0.1):
     
     train_frame.to_csv(os.path.join(base, 'train.tsv'), sep='\t', index=False)
     eval_frame.to_csv(os.path.join(base, 'eval.tsv'), sep='\t', index=False)
-
-def clean_index_text(index:str):
-    '''
-    Given an index generated by the preprocess script, this function
-    will re-clean the text targets with the clean_text method. This
-    can be handy since often times the tokens used in the ASR change.
-    '''
-
-    frame = pd.read_csv(index, names=['normalized_text', 'path_to_fbank', 
-        's_len', 'unpadded_num_frames', 'text_fname', 'wav_fname'], sep='\t')    
-    frame['normalized_text'] = frame.apply(lambda row: cit_helper(row), axis=1) 
-    frame.to_csv(index, sep='\t', index=False, header=False)    
-
-def cit_helper(row):
-    return normalize_string(text_from_file(row['text_fname']))[0]
 
 def sort_index(index:str, sort_key:str, sort_ascending:bool=True, out_index:str=None):
     '''
@@ -347,32 +314,17 @@ def sort_index(index:str, sort_key:str, sort_ascending:bool=True, out_index:str=
     if out_index is not None: index = out_index
     frame.to_csv(index, sep='\t', index=False, header=False)
 
-def update_slen(index:str):
-    '''
-    Sometimes, the calculates cleaned string length is wrong. This
-    simple function can be run on an index to make sure that the
-    length is equal to the actual length of the normalized strings
-    '''
-    from dataset import load_df
-    frame = load_df(index)
-    for i, row in frame.iterrows():
-        if len(frame.loc[i, 'normalized_text']) != frame.loc[i, 's_len']:
-            frame.loc[i, 's_len'] = len(frame.loc[i, 'normalized_text'])
-    frame.to_csv(index, sep='\t', index=False, header=False)
-
-def subset_by_t(t: float, index: str, out_index: str):
+def subset_by_t(t: float, index: str, out_index: str, avg_utt_s=4.5):
     from dataset import load_df
     '''
-    This works particularilly with the Malromur corpus, since the average
-    length of utterances from malromur was calculated to be ~ 4.5s
-    
+    Generate a new index file     
     input arguments:
     * t (int): How large, in seconds, the subset should be
     * index (str): Path to a dataset index
     * out_index (str): Path to where the new index should be stored
+    * avg_utt_s (float), default=4.5 : The average utterance length
+    in seconds of the dataset used.
     '''
-    avg_utt_s = 4.5
-    
     df = load_df(index)
     num_to_sample =  int(t/avg_utt_s)
 
@@ -381,15 +333,42 @@ def subset_by_t(t: float, index: str, out_index: str):
     sampled_df = df.sample(n=num_to_sample)
     sampled_df.to_csv(out_index, sep='\t', index=False, header=False)
 
-
 if __name__ == '__main__':
-    #preprocess('data/ivona_speech_data/ivona_txt', 'data/ivona_speech_data/Kristjan_export', processed_dir='data/ivona_processed')
-    #make_split('./data/processed/index.tsv')
-    #make_split('./data/ivona_processed/index.tsv')
-    #clean_index_text('./data/ivona_processed/index.tsv')
-    #sort_index('./data/ivona_processed/index.tsv', 's_len', sort_ascending=False)
-    #update_slen('./data/ivona_processed/index.tsv')
-    #preprocess_malromur('/data/malromur2017/info.txt', '/data/malromur2017/correct', './processed_data/malromur2017')
-    #subset_by_t(10*60*60, './processed_data/malromur2017/index.tsv', './processed_data/malromur2017/10hour.tsv')
-    sort_index('./processed_data/malromur2017/10hour.tsv', 'unpadded_num_frames', sort_ascending=False, 
-        out_index='./processed_data/malromur2017/production_indexes/10hour_byxlen.tsv')
+    parser = argparse.ArgumentParser()
+    subparsers = parser.add_subparsers(dest='dataset', help='Type of dataset')
+    malromur_parser = subparsers.add_parser("malromur")
+    generic_parser = subparsers.add_parser("generic")
+    
+    # malromur
+    malromur_parser.add_argument('output_dir',
+        metavar='o', 
+        type=str,
+        help='The name of the main output folder under ./data')
+    malromur_parser.add_argument('index',
+        type=str, 
+        help='The path to the malromur index file')
+    malromur_parser.add_argument('wav_dir',
+        type=str,
+        help='The path to the wav directory of Malromur')
+
+    # generic dataset
+    generic_parser.add_argument('output_dir',
+        metavar='o',
+        type=str,
+        help='The name of the main output folder under ./data')
+    generic_parser.add_argument('wav_dir',
+        type=str,
+        help='The path to the wav directory of the dataset')
+    generic_parser.add_argument('txt_dir', 
+        type=str,
+        help='The path to the txt directory of the dataset')
+
+    args = parser.parse_args()
+    if args.dataset == 'malromur':
+        print('Preprocessing Malromur')
+        preprocess_malromur(args.index, args.wav_dir, args.o)
+    else:
+        print('Preprocessing a generic dataset')
+        preprocess(args.txt_dir, args.wav_dir, args.o)
+
+

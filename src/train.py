@@ -9,43 +9,62 @@ import numpy as np
 import torch
 import yaml
 
-from solver import (AdvTrainer, ASRTrainer, LMTrainer, SAETrainer,
-                    TAETrainer, ASRTester)
-
-torch.backends.cudnn.deterministic = True
+import trainer
 
 # Arguments
-parser = argparse.ArgumentParser(description='Training E2E asr.')
-parser.add_argument('--type', type=str, 
-    help='asr | rnn_lm | tae | sae | adv | test',
-    default='asr')
-parser.add_argument('--name', type=str, help='Name for logging.', 
-    default='newtest')
-parser.add_argument('--config', type=str, 
-    default='./conf/test.yaml', 
-    help='Path to experiment config.')
-parser.add_argument('--logdir', default='runs/', 
-    type=str, help='Logging path.', required=False)
-parser.add_argument('--ckpdir', default='result/', 
-    type=str, help='Checkpoint/Result path.', required=False)
-parser.add_argument('--seed', default=1, type=int, 
-    help='Random seed for reproducable results.', required=False)
-parser.add_argument('--verbose', default=True, 
-    type=bool, required=False)
+parser = argparse.ArgumentParser()
+parser.add_argument('type',
+    metavar='t',
+    type=str,
+    nargs='?',
+    help='The type of training/testing to perform',
+    choices=['ASRTrainer', 'ASRTester', 'LMTrainer', 'TAETrainer', 
+        'SAETrainer', 'AdvTrainer'],
+    default='ASRTrainer')
+parser.add_argument('name',
+    metavar='n',
+    type=str,
+    nargs='?',
+    help='Name for logging', 
+    default='experiment_1')
+parser.add_argument('config',
+    metavar='c',
+    type=str,
+    nargs='?',
+    help='Path to experiment config.',
+    default='./conf/test.yaml')
+parser.add_argument('logdir',
+    type=str,
+    nargs='?',
+    help='Logging path.',
+    default='runs/')
+parser.add_argument('ckpdir',
+    type=str,
+    nargs='?',
+    help='Checkpoint/Result path.',
+    default='result/')
+parser.add_argument('--seed',
+    type=int,
+    help='Random generator seed.',
+    default=1)
+parser.add_argument('--verbose',
+    type=bool,
+    help='If set to true, a lot of information is printed (recommended)',
+    default=True)
 
 paras = parser.parse_args()
+config = yaml.safe_load(open(paras.config,'r'))
 
-type_map = {'asr': ASRTrainer, 'rnn_lm': LMTrainer, 'tae': TAETrainer, 
-    'sae': SAETrainer, 'adv': AdvTrainer, 'test': ASRTester }
-
-config = yaml.load(open(paras.config,'r'), Loader=yaml.FullLoader)
-
+# Set the seed of all generators to the selected seed
+# for deterministic results
 random.seed(paras.seed)
 np.random.seed(paras.seed)
 torch.manual_seed(paras.seed)
 if torch.cuda.is_available(): torch.cuda.manual_seed_all(paras.seed)
+torch.backends.cudnn.deterministic = True
 
-trainer = type_map[paras.type](config,paras)
-trainer.load_data()
-trainer.set_model()
-trainer.exec()
+# Setup the selected trainer
+sel_trainer = getattr(trainer, paras.type)(config, paras) 
+sel_trainer.load_data()
+sel_trainer.set_model()
+sel_trainer.exec()
