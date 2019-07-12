@@ -169,7 +169,6 @@ class ASRDataset(Dataset):
         Fetches the text from the given index, maps
         to character indexes and returns as an ndarray
         '''
-        encoded = [self.char2idx(c) for c in text]
         return np.array([self.char2idx(c) for c in text])
 
     def decode(self, inds) -> str:
@@ -252,7 +251,17 @@ class Mapper():
         new_seq = ''.join(new_seq).replace(SOS_TKN,'').replace(EOS_TKN,'')
         return new_seq
 
-def load_dataset(path: str, batch_size:int=1, n_jobs:int=8, text_only:bool=False, 
+    def ind_to_char(self, ind):
+        '''
+        Input arguments: 
+        * ind (int): Mapping value for some character
+        '''
+        return self.r_mapping[ind]
+
+    def char_to_ind(self, char):
+        return self.mapping[char]
+
+def load_asr_dataset(path: str, batch_size:int=1, n_jobs:int=8, text_only:bool=False, 
     use_gpu:bool=False, sort_key='', sort_ascending=True, drop_rate:float=0.0):
     '''
     Input arguments:
@@ -284,8 +293,6 @@ def load_dataset(path: str, batch_size:int=1, n_jobs:int=8, text_only:bool=False
     return Mapper(), dataset, DataLoader(dataset, batch_size=1, 
         num_workers=n_jobs, pin_memory=use_gpu)
 
-
-
 def prepare_x(x, device=torch.device('cpu')):
     '''
     Input arguments:
@@ -302,7 +309,6 @@ def prepare_x(x, device=torch.device('cpu')):
     x_lens = [int(sl) for sl in x_lens]
     
     return x, x_lens
-
 
 def prepare_y(y, device=torch.device('cpu')):
     '''

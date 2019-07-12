@@ -19,7 +19,7 @@ parser.add_argument('type',
     nargs='?',
     help='The type of training/testing to perform',
     choices=['ASRTrainer', 'ASRTester', 'LMTrainer', 'TAETrainer', 
-        'SAETrainer', 'AdvTrainer'],
+        'SAETrainer', 'AdvTrainer', 'Seed'],
     default='ASRTrainer')
 parser.add_argument('name',
     metavar='n',
@@ -32,7 +32,7 @@ parser.add_argument('config',
     type=str,
     nargs='?',
     help='Path to experiment config.',
-    default='./conf/test.yaml')
+    default='./conf/default.yaml')
 parser.add_argument('logdir',
     type=str,
     nargs='?',
@@ -64,7 +64,10 @@ if torch.cuda.is_available(): torch.cuda.manual_seed_all(paras.seed)
 torch.backends.cudnn.deterministic = True
 
 # Setup the selected trainer
-sel_trainer = getattr(trainer, paras.type)(config, paras) 
-sel_trainer.load_data()
-sel_trainer.set_model()
-sel_trainer.exec()
+if paras.type == 'Seed':
+    trainer.asr_seed_train(config, paras)
+else:
+    sel_trainer = getattr(trainer, paras.type)(config, paras) 
+    sel_trainer.load_data()
+    sel_trainer.set_model()
+    sel_trainer.exec()

@@ -49,7 +49,7 @@ class TextAutoEncoder(nn.Module):
         '''
 
         '''First, text autoencoder specifics only'''
-        y_encoded = self.encoder(y_noised)
+        y_encoded = self.encoder(y_noised) # [bs, seq, encoder.state_size*2]
 
         '''Then, we do attendAndSpell from the LAS ASR'''
         asr.decoder.init_rnn(y_encoded.shape[0], y_noised.device)

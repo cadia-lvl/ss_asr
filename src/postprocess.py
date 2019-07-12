@@ -9,8 +9,7 @@ class Hypothesis:
     '''
     Hypothesis for beam search decoding.
     Stores the history of label sequence & score 
-    Stores the previous decoder state, ctc state, ctc score, 
-    lm state.
+    Stores the previous decoder state, lm state.
     '''
     
     def __init__(self, decoder_state, emb, output_seq=[],
@@ -27,7 +26,6 @@ class Hypothesis:
                 
         # Embedding layer for last_char
         self.emb = emb
-        
 
     def avg_score(self):
         '''
@@ -120,7 +118,29 @@ def calc_err(predict, label, mapper):
     
     return sum(ds)/len(ds)
 
+def simple_wer(predict, label):
+    ds = float(ed.eval(predict.split(' '), label.split(' ')))/len(label.split(' ')) 
+    return ds
+
+def simple_acc(predict, label):
+    '''
+    Input arguments:
+    * predict: A [batch_size, seq_len, char_dim] tensor, representing
+    the prediction made for the label
+    * label:  A [batch_size, seq_len] of mapped characters to indexes
+
+    Returns the character-level accuracy of the prediction for 
+    the whole batch.
+    '''
+    correct = 0.0
+    total_char = 0
+    for p,l in zip(predict,label):
+        correct += int(p==l)
+    return correct/len(predict)
+
 # Only draw first attention head
+# TODO: Change this to the more simpler loghandler.figure style
+# as in SAETrainer
 def draw_att(att_maps, hyps):
     '''
     Input arguments:
@@ -130,7 +150,7 @@ def draw_att(att_maps, hyps):
     '''
     attmaps = []
     for i in range(att_maps.shape[0]):
-        att_i = att_maps[i, :, :].view(att_maps.shape[1], att_maps.shape[2])
+        att_i = att_maps[i, :, :]
         att_len = len(trim_eos(hyps[i]))
         attmaps.append(torch.stack([att_i,att_i,att_i],dim=0)[:, :att_len, :])
     return attmaps
@@ -139,7 +159,12 @@ def trim_eos(sequence):
     new_pred = []
     for char in sequence:
         new_pred.append(int(char))
-        # HACK: 1 maps to '>', generally speaking
+        # HACK: 1 maps to '>', generally speakingn
         if char == 1:
             break
     return new_pred
+
+if __name__ == '__main__':
+    label = 'hægindi'
+
+    print(simple_wer(predict, label))

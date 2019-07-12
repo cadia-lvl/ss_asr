@@ -6,6 +6,6 @@
 
 ~/envs/LAS/bin/python3 src/train.py \
 	--type='asr'\
-	--name='malromur2017_default'\
+	--name='malromur_badeval'\
 	--config='./conf/malromur2017_default.yaml'
 

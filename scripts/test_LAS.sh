@@ -4,8 +4,8 @@
 #SBATCH --time=1800
 #SBATCH --gres=gpu:4
 
-~/envs/LAS/bin/python3 src/eval.py \
+~/envs/LAS/bin/python3 src/asr_test.py \
 	--type='asr'\
-	--name='malromur2017_default'\
+	--name='malromur_default'\
 	--config='./conf/malromur2017_default.yaml'
 

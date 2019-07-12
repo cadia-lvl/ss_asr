@@ -1,8 +1,8 @@
-asr_model:
-  optimizer:
+asr:
+  opt:
     type: 'Adadelta'                               # Optimizer used for training (not mentioned in LAS)      
     learning_rate: 1.0                             # Learning rate for opt (not mentioned in LAS)
-  model_para:
+  mdl:
     encoder_state_size: 256                                # The state size of the LSTM used in the encoder (LAS approved)
     mlp_out_size: 128                              # The dimension projected to by the phi and psi nets
     decoder_state_size: 256                                # The state size of the LSTM used in the decoder (LAS approved)
@@ -11,40 +11,40 @@ asr_model:
   decode_lm_weight: 0.5 
 
 speech_autoencoder:
-  optimizer:
+  opt:
     type: 'Adadelta'                                    # Optimizer used for training speech auto encoder (Drexler approved)
     learning_rate: 1.0                             # Learning rate for opt (Drexler approved)
-  model_para:
+  mdl:
     kernel_sizes: [[36, 1], [1, 5], [1, 3]]          # A list of kernel sizes for the 3 convolutional layers
     num_filters: [32, 64, 256]                       # A list of output filters for the 3 convolutional layers
     pool_kernel_sizes: [[3, 1], [5, 1], [2000, 40]]  # A list of kernel sizes (only 3 values) for the max pooling of each convolutional layer
     
 text_autoencoder:
-  optimizer:
+  opt:
     type: 'Adadelta'
     learning_rate: 1.0
-  model_para:
+  mdl:
     state_size: 256
     emb_dim: 128
     num_layers: 2
   drop_rate: 0.1                                   # The probability of a character being dropped in the input
 
 discriminator:
-  G_optimizer:
+  G_opt:
     type: 'Adadelta'
     learning_rate: 1.0
-  D_optimizer:
+  D_opt:
     type: 'Adadelta'
     learning_rate: 1.0  
-  model_para:
+  mdl:
     hidden_dim: 256
   label_smoothing: 0.1
 
 rnn_lm:
-  optimizer: 
+  opt: 
     type: 'Adam'                                   # Optimizer used for training
     learning_rate: 0.001                           # Learning rate for optimizer
-  model_para:           
+  mdl:           
     emb_dim: 650                                   # Word embedding dimensionality
     hidden_dim: 650                                # Hidden dimensionality of RNN unit
     num_layers: 2                                  # Number of RNN layers

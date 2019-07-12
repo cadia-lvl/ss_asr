@@ -2,7 +2,11 @@ env/
 data/
 log/
 result/
+old_results/
+old_runs/
 runs/
+scripts/
+
 processed_data/
 backup_logs/
 backup_results/

@@ -5,7 +5,6 @@
 #SBATCH --gres=gpu:4
 
 ~/envs/LAS/bin/python3 src/train.py \
-    --type='adv'\
-    --name='adv_test'\
-    --config='./conf/test_malromur2017_25h.yaml'
-
+    --type='char_lm'\
+    --name='testchar'\
+    --config='./conf/malromur2017_default.yaml'

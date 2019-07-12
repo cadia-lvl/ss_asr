@@ -10,6 +10,7 @@ import numpy as np
 import math
 
 from postprocess import Hypothesis
+from preprocess import EOS_TKN
 
 class ASR(nn.Module):
     def __init__(self, output_dim: int, encoder_state_size: int, 
@@ -44,6 +45,8 @@ class ASR(nn.Module):
 
         self.tf_rate = tf_rate
 
+        # In terms of loading a model, this is ok since we load
+        # the trained weights after doing this initalization
         self.init_parameters()
     
     def forward(self, audio_feature, decode_step, teacher=None, 
@@ -57,7 +60,7 @@ class ASR(nn.Module):
         '''
 
         # encode_feature shape : [batch_size, ~seq/8, listener.state_size*2]
-        encode_feature, encode_len = self.encoder(audio_feature, state_len)
+        encode_feature, encode_len = self.encoder(audio_feature, state_len) 
 
         # Attention based decoding
         if teacher is not None:
@@ -104,9 +107,83 @@ class ASR(nn.Module):
         # shape: [batch_size, encode_steps, decode_steps]
         [batch_size, encode_step, _] = encode_feature.shape 
         output_att_seq = torch.stack(output_att_seq, dim=1)
-        #.view(batch_size, encode_step, decode_step)
         return encode_len, att_output, output_att_seq
+    
+    def decode(self, x, x_len, rnn_lm, mapper, lm_weight):
+        '''
+        This is only used for inference and testing. Both the ASR
+        and the supplied LM should be in validation mode.
 
+        Input arguments:
+        x (tensor): A single audio sample, shape = [1, seq, features]
+        x_len (list): The ouput of dataset.prepare_x(x)
+        rnn_lm (nn.Module): A language model
+        mapper (object): A dataset.mapper instance
+        '''
+        curr_device = next(self.decoder.parameters()).device
+
+        assert len(x.shape) == 3 and x.shape[0] == 1
+        bs = x.shape[0]
+        decoding_steps = 0
+        max_decoding_steps = 200
+        # encode_feature shape : [batch_size, ~seq/8, listener.state_size*2]
+        encode_feature, encode_len = self.encoder(x, x_len)
+
+        # Init (init char = <SOS>, reset all rnn state and cell)
+        self.decoder.init_rnn(bs, curr_device)
+        (h1, h2) = rnn_lm.init_hidden(bs, curr_device)
+        self.attention.reset_enc_mem()
+        batch_size = x.shape[0]
+        last_char = self.embed(torch.zeros((batch_size), dtype=torch.long).to(curr_device))
+        last_char_idx = torch.LongTensor([0]).to(curr_device)
+        output_char_seq = []
+        output_att_seq = []
+        char_predicts = []
+        # we keep decoding until <EOS> has been emitted
+        while decoding_steps < max_decoding_steps:
+            # Attend (inputs current state of first layer, encoded features)
+            # shapes: attn_score [batch_size, encode_steps]
+            attention_score, context = self.attention(
+                self.decoder.state_list[0], encode_feature, encode_len)
+            # Spell (inputs context + embedded last character)                
+            decoder_input = torch.cat([last_char, context],dim=-1)
+            dec_out = self.decoder(decoder_input)
+            
+            # To char
+            asr_predict = F.log_softmax(self.char_trans(dec_out), dim=-1)
+            lm_out, (h1, h2) = rnn_lm(last_char_idx, h1, h2)
+            lm_predict = F.log_softmax(lm_out.squeeze(1), dim=-1)
+            final_predict = asr_predict + lm_weight * lm_predict
+            asr_char = torch.argmax(asr_predict,dim=-1)
+            lm_char = torch.argmax(lm_predict,dim=-1)
+            predicted_char = torch.argmax(final_predict,dim=-1)
+            print("{} vs. {}".format(mapper.ind_to_char(asr_char.item()), 
+                mapper.ind_to_char(lm_char.item()) ))
+            
+            last_char_idx = torch.LongTensor([predicted_char]).to(curr_device)
+            last_char = self.embed(predicted_char)
+
+            output_char_seq.append(final_predict)
+            output_att_seq.append(attention_score.cpu().detach())
+
+            if predicted_char.item() == mapper.char_to_ind(EOS_TKN):
+                #print("Stopping because of EOS")
+                break
+
+            char_predicts.append(mapper.ind_to_char(predicted_char.item()))
+            
+            decoding_steps += 1
+
+
+        return ''.join(c for c in char_predicts)
+        '''
+        att_output = torch.stack(output_char_seq, dim=1)
+
+        # shape: [batch_size, encode_steps, decode_steps]
+        [batch_size, encode_step, _] = encode_feature.shape 
+        output_att_seq = torch.stack(output_att_seq, dim=1)
+        return encode_len, att_output, output_att_seq
+        '''
     def init_parameters(self):
         def lecun_normal_init_parameters(module):
             for p in module.parameters():
@@ -146,75 +223,48 @@ class ASR(nn.Module):
         set_forget_bias_to_one(self.decoder.layer_1.bias_ih)
         set_forget_bias_to_one(self.decoder.layer_2.bias_ih)
 
-    def beam_decode(self, audio_feature, decode_step, state_len, decode_beam_size, rnn_lm=None,
-        decode_lm_weight=0):
+    def beam_decode(self, enc_out, enc_len, max_decode_steps, beam_width=5,
+        charlm=None, lm_weight=0.0):
         '''
-        Beam decode returns top N hyps for each input sequence
-        This is only ever used during inference, not training!
+        Input arguments:
+        * enc_out (Tensor): The output of self.encoder(x)
+        * enc_len (list): The unpadded length output of self.encoder(x)
+        * max_decode_steps (int): The maximum number of decoding steps. We will
+        force encoding to stop at that step in case it has not emitted <eos> for
+        all hypothesis in beam.
+        * beam_width (int): The number of hypothesis to consider at each level
+        of beam search.
+        * charlm (nn.Module): A CharLM model
+        * lm_weight (float): Parameter that determines the influence of the
+        language model during beam rescoring
         '''
-        assert audio_feature.shape[0] == 1
-        assert self.training == False
-        
-        # Encode
-        encode_feature, encode_len = self.encoder(audio_feature,state_len)
-        if decode_step == 0:
-            decode_step = int(encode_len[0])
 
-        cur_device = next(self.decoder.parameters()).device
+        for t in range(max_decode_steps):
+            # iterate over hypthesis in beam
+            for hyp in best_hyps:
+                # set decoder hidden state of self to that of the hypothesis
+                self.encoder.hidden_state = hyp.get_asr_hidden()
 
-        # Init (init char = <SOS>, reset all rnn state and cell)
-        self.decoder.init_rnn(encode_feature.shape[0], encode_feature.device)
-        self.attention.reset_enc_mem()
-        last_char = self.embed(torch.zeros((1),dtype=torch.long).to(cur_device))
-        last_char_idx = torch.LongTensor([[0]])
-        
-        # beam search init
-        final_outputs, prev_top_outputs, next_top_outputs = [], [], []
-        
-        # TODO check out this bug
-        # WeirD BUG here if all args. are not passed...
-        prev_top_outputs.append(Hypothesis(self.decoder.hidden_state, self.embed)) 
-        
-        # Decode
-        for t in range(decode_step):
-            for prev_output in prev_top_outputs:
-                
-                # Attention
-                self.decoder.hidden_state = prev_output.decoder_state
-                
-                attention_score,context = self.attention(
-                    self.decoder.state_list[0],encode_feature,encode_len)
-                decoder_input = torch.cat([prev_output.last_char,context],dim=-1)
+                # calculate attention for the current hypothesis at the current
+                # timestep
+                attention_score, context = self.attention(
+                    self.decoder.state_list[0], encode_feature, encode_len)
+
+                # Spell (inputs context + embedded last character)                
+                decoder_input = torch.cat([hyp.get_last_char(), context], dim=-1)
                 dec_out = self.decoder(decoder_input)
-                cur_char = F.log_softmax(self.char_trans(dec_out), dim=-1)
+                print(dec_out.shape)
+                # To char
+                cur_char = self.char_trans(dec_out)
+                cur_char = F.log_softmax(cur_char, dim=-1) # softmax over characters
 
-                # Joint RNN-LM decoding
-                if rnn_lm is not None:
-                    last_char_idx = prev_output.last_char_idx.to(cur_device)
-                    lm_hidden, lm_output = rnn_lm(last_char_idx, [1], prev_output.lm_state)
-                    cur_char += decode_lm_weight * F.log_softmax(lm_output.squeeze(1), dim=-1)
-
-                # Beam search
-                top_vals, top_idx = cur_char.topk(decode_beam_size)
-                final, top = prev_output.add_topk(top_idx, top_vals, 
-                    self.decoder.hidden_state, lm_state=lm_hidden)
-                
-                # Move complete hyps. out
-                if final is not None:
-                    final_outputs.append(final)
-                    if decode_beam_size == 1:
-                        return final_outputs
-                next_top_outputs.extend(top)
-            
-            # Sort for top N beams
-            next_top_outputs.sort(key=lambda o: o.avg_score(), reverse=True)
-            prev_top_outputs = next_top_outputs[:decode_beam_size]
-            next_top_outputs = []
-            
-            final_outputs += prev_top_outputs
-            final_outputs.sort(key=lambda o: o.avg_score(), reverse=True)
-        
-        return final_outputs[:decode_beam_size]
+                # rescore beams with charlm
+                if charlm is not None and lm_weight > 0.0:
+                    lm_out, lm_hidden = charlm(hyp.get_last_char_idx(), hyp.get_lm_hidden())
+                    
+                    # add LM prediction to complete prediction
+                    print(lm_out.shape)
+                    cur_char +=  self.lm_weight * F.log_softmax(lm_out.squeeze, dim=-1)
 
 
 class Listener(nn.Module):
@@ -257,6 +307,7 @@ class Listener(nn.Module):
 
         Output:
         * x (Tensor): A [batch_size, seq/8, state_size*2] shaped tensor
+        * state_len (list): The unpadded lengths of each feature
         '''
         x, _, state_len = self.blstm_1(x, state_len=state_len, 
             pack_input=pack_input)
@@ -457,6 +508,5 @@ class pBLSTM(nn.Module):
 
 if __name__ == '__main__':
     l = Listener(256, 40)
-    x = torch.randn(32, 200, 40)
-
-    print(l(x, [200 for _ in range(32)])[0].shape)
+    x = torch.randn(32, 8, 40)
+    print(l(x, [8 for _ in range(32)])[0].shape)
