@@ -69,7 +69,7 @@ Type | Description | Identifier
 
 (*): Will affect the parameters of the baseline ASR.
 
-The identifier is used to seperate results generated (see usage [here](##results). All training runs require certain parameters, see `python3 src/train.py -h` for information but most notably a configuration `.yaml` file. An example of a configuration file is found [here](/conf/default.yaml) and detailed information here [here](./conf/README.md).
+The identifier is used to seperate results generated (see usage [here](#results). All training runs require certain parameters, see `python3 src/train.py -h` for information but most notably a configuration `.yaml` file. An example of a configuration file is found [here](/conf/default.yaml) and detailed information here [here](./conf/README.md).
 
 ## Results
 The results produced by training depend on the type of training. Each training type will
