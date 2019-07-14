@@ -80,6 +80,7 @@ its | The number of iterations of the main training loop to perform
 
 ## Preprocessing parameters
 This is a short description of the parameters that are found in `./src/preprocess.py`.
+
 Parameter    | Description
 ------------ | --------------
 CHARS | The latin alphabet and digits
