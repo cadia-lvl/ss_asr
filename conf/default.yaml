@@ -2,7 +2,6 @@ asr:
   opt:
     type: 'Adadelta'
     learning_rate: 1.0
-
   mdl:
     encoder_state_size: 256
     mlp_out_size: 128
@@ -10,9 +9,9 @@ asr:
     tf_rate: 0.9
     feature_dim: 40
 
-  train_index: './processed_data/malromur2017/production_indexes/5hour_byxlen.tsv'
-  valid_index: './processed_data/malromur2017/production_indexes/eval_index_byxlen.tsv'
-  test_index: './processed_data/malromur2017/production_indexes/100_by_xlen.tsv'
+  train_index: './data/train.tsv'
+  valid_index: './data/valid.tsv'
+  test_index: './data/test.tsv'
 
   decode_beam_size: 3
   decode_jobs: 8
@@ -20,15 +19,6 @@ asr:
   decode_lm_weight: 0.5
 
   wer_step: 50
-
-  train_batch_size: 32
-  valid_batch_size: 32
-  test_batch_size: 1
-
-  n_epochs: 50
-  valid_step: 1000
-  save_step: 500
-  logging_step: 1
 
 sae:
   opt:
@@ -39,8 +29,8 @@ sae:
     num_filters: [32, 64, 256]
     pool_kernel_sizes: [[3, 1], [5, 1], [2000, 40]]
 
-  train_index: './processed_data/malromur2017/production_indexes/train_index_byxlen.tsv'
-  valid_index: './processed_data/malromur2017/production_indexes/eval_index_byxlen.tsv'
+  train_index: './data/train.tsv'
+  valid_index: './data/valid.tsv'
 
   train_batch_size: 32
   eval_batch_size: 32
@@ -59,8 +49,8 @@ tae:
     num_layers: 2
   drop_rate: 0.1
 
-  train_index: './processed_data/malromur2017/production_indexes/train_index_byxlen.tsv'
-  valid_index: './processed_data/malromur2017/production_indexes/eval_index_byxlen.tsv'
+  train_index: './data/train.tsv'
+  valid_index: './data/valid.tsv'
 
   train_batch_size: 64
   eval_batch_size: 64
@@ -80,8 +70,8 @@ adv:
     hidden_dim: 256
   label_smoothing: 0.1
 
-  train_index: './processed_data/malromur2017/production_indexes/train_index_byxlen.tsv'
-  eval_index: './processed_data/malromur2017/production_indexes/eval_index_byxlen.tsv'
+  train_index: './data/train.tsv'
+  valid_index: './data/valid.tsv'
 
   train_batch_size: 32
   eval_batch_size: 32
@@ -99,8 +89,8 @@ char_lm:
     hidden_size: 128
     tf_rate: 0.9
 
-  train_index: './processed_data/risamalromur/train.txt'
-  valid_index: './processed_data/risamalromur/eval.txt'
+  train_index: './data/text_train.txt'
+  valid_index: './data/text_eval.txt'
 
   chunk_size: 200
 
