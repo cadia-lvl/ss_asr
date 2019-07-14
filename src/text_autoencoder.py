@@ -11,17 +11,17 @@ class TextAutoEncoder(nn.Module):
         '''
         Input arguments:
         * char_dim (int): Number of symbols used in the ASR
-        * emb_dim (int): The dimensionality of the character 
+        * emb_dim (int): The dimensionality of the character
         embeddings
         * state_size (int): The state size of the bLSTM layers.
 
-        * an encoder: The text encoder takes one-hot character 
-        encodings as input. It is composed of a single embedding 
-        layer, to convert these inputs to character vectors, 
+        * an encoder: The text encoder takes one-hot character
+        encodings as input. It is composed of a single embedding
+        layer, to convert these inputs to character vectors,
         followed by two bLSTM layers.
 
-        * a decoder: The decoder is shared with the 
-        LAS model, such that training this autoencoder 
+        * a decoder: The decoder is shared with the
+        LAS model, such that training this autoencoder
         also trains the parameters of the LAS decoder.
         '''
         super(TextAutoEncoder, self).__init__()
@@ -35,17 +35,17 @@ class TextAutoEncoder(nn.Module):
         * y (Tensor): A Tensor of shape [batch, seq]
         where y[i, j] is the encoded version of the j-th character
         from the i-th sample in the y batch.
-        * y_noised (Tensor): A [batch_size, =< seq] tensor, containing the 
-        noisy text. 
+        * y_noised (Tensor): A [batch_size, =< seq] tensor, containing the
+        noisy text.
         * decode_step (int): The length of the longest target in the batch.
         * noise_lens (List like): All unpadded target lengths (after noising)
-        * asr (nn.Module): 
+        * asr (nn.Module):
         y and y_noised are the same, but characters may have been dropped from
         y_noised.
-        
-        To run this forward without any noise, supply y_noised=y and 
+
+        To run this forward without any noise, supply y_noised=y and
         noise_lens=y_lens
-        
+
         '''
 
         '''First, text autoencoder specifics only'''
@@ -57,7 +57,7 @@ class TextAutoEncoder(nn.Module):
 
         # y shape: [bs, seq, dataset.get_char_dim()]
         y = asr.embed(y)
-    
+
         batch_size = y_noised.shape[0]
         last_char = asr.embed(torch.zeros((batch_size),
             dtype=torch.long).to(next(asr.decoder.parameters()).device))
@@ -70,10 +70,10 @@ class TextAutoEncoder(nn.Module):
             # Attend (inputs current state of first layer, encoded features)
             attention_score, context = asr.attention(
                 asr.decoder.state_list[0], y_encoded, noise_lens)
-            # Spell (inputs context + embedded last character)                
+            # Spell (inputs context + embedded last character)
             decoder_input = torch.cat([last_char, context],dim=-1)
             dec_out = asr.decoder(decoder_input)
-            
+
             # To char
             cur_char = asr.char_trans(dec_out)
 
@@ -96,7 +96,7 @@ class TextAutoEncoder(nn.Module):
 class TextEncoder(nn.Module):
     def __init__(self, char_dim, emb_dim, state_size, num_layers):
         super(TextEncoder, self).__init__()
-        
+
         self.emb = nn.Embedding(char_dim, emb_dim)
         self.blstm = nn.LSTM(input_size=emb_dim, hidden_size=state_size,
             num_layers=num_layers, bidirectional=True, batch_first=True)

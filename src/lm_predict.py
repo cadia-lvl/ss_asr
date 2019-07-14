@@ -16,32 +16,31 @@ torch.backends.cudnn.deterministic = True
 
 # Arguments
 parser = argparse.ArgumentParser(description='Training E2E asr.')
-parser.add_argument('--type', type=str, 
+parser.add_argument('--type', type=str,
     help='asr | tae | sae | adv | test | char_lm',
     default='char_lm')
-parser.add_argument('--name', type=str, help='Name for logging.', 
+parser.add_argument('--name', type=str, help='Name for logging.',
     default='newtest')
-parser.add_argument('--config', type=str, 
-    default='./conf/test.yaml', 
+parser.add_argument('--config', type=str,
+    default='./conf/test.yaml',
     help='Path to experiment config.')
-parser.add_argument('--logdir', default='runs/', 
+parser.add_argument('--logdir', default='runs/',
     type=str, help='Logging path.', required=False)
-parser.add_argument('--ckpdir', default='result/', 
+parser.add_argument('--ckpdir', default='result/',
     type=str, help='Checkpoint/Result path.', required=False)
-parser.add_argument('--seed', default=1, type=int, 
+parser.add_argument('--seed', default=1, type=int,
     help='Random seed for reproducable results.', required=False)
-parser.add_argument('--verbose', default=True, 
+parser.add_argument('--verbose', default=True,
     type=bool, required=False)
-parser.add_argument('--sanity', default=False)
 parser.add_argument('--text', type=str)
 parser.add_argument('--tf_rate', type=float, default=1)
 
 paras = parser.parse_args()
 
-type_map = {'asr': ASRTrainer, 'tae': TAETrainer, 
+type_map = {'asr': ASRTrainer, 'tae': TAETrainer,
     'sae': SAETrainer, 'adv': ADVTrainer, 'char_lm': CHARLMTrainer}
 
-config = yaml.load(open(paras.config,'r'), Loader=yaml.FullLoader)
+config = yaml.safe_load(open(paras.config,'r'))
 
 random.seed(paras.seed)
 np.random.seed(paras.seed)

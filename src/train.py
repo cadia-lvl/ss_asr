@@ -1,5 +1,3 @@
-#!/usr/bin/env python
-# coding: utf-8
 import argparse
 import os
 import random
@@ -18,14 +16,14 @@ parser.add_argument('type',
     type=str,
     nargs='?',
     help='The type of training/testing to perform',
-    choices=['ASRTrainer', 'ASRTester', 'LMTrainer', 'TAETrainer', 
+    choices=['ASRTrainer', 'ASRTester', 'LMTrainer', 'TAETrainer',
         'SAETrainer', 'AdvTrainer', 'Seed'],
     default='ASRTrainer')
 parser.add_argument('name',
     metavar='n',
     type=str,
     nargs='?',
-    help='Name for logging', 
+    help='Name for logging',
     default='experiment_1')
 parser.add_argument('config',
     metavar='c',
@@ -67,7 +65,7 @@ torch.backends.cudnn.deterministic = True
 if paras.type == 'Seed':
     trainer.asr_seed_train(config, paras)
 else:
-    sel_trainer = getattr(trainer, paras.type)(config, paras) 
+    sel_trainer = getattr(trainer, paras.type)(config, paras)
     sel_trainer.load_data()
     sel_trainer.set_model()
     sel_trainer.exec()

@@ -1,6 +1,6 @@
 
-# The PyTorch implementation of the model proposed in the Msc. thesis in Machine Learning: [A Semi-Supervised Approach to Automatic Speech Recognition Training For the Icelandic Language](thesis.pdf)
-__Abstract__: Recent advances in deep learning have enabled certain systems to approach or even achieve human parity in certain tasks, including automatic speech recognition. These new state-of-the-art methods are most often dependent on vast amounts of expensive high-quality labeled speech data for supervised training. In this work, we consider ways of leveraging unlabeled data for unsupervised training to reduce this costly data dependency. Six altered models are compared to a baseline sequence-to-sequence speech recognition model under three different low resource conditions. We show that for all three conditions, a semi-supervised approach surpasses the quality of the baseline.
+## A semi-supervised sequence-to-sequence ASR model
+A PyTorch implementation of the model proposed in [A Semi-Supervised Approach to Automatic Speech Recognition Training For the Icelandic Language](thesis.pdf)
 
 ## Architecture
 Blablabla
@@ -9,7 +9,7 @@ Blablabla
 * `src/asr.py`: The baseline ASR, similar to _Listen, Attend & Spell_.
 * `src/text_autoencoder.py`: The `forward()` of the whole autoencoder as well as the architecture of the encoder.
 * `src/speech_autoencoder.py`: The `forward()` of the whole autoencoder as well as the architecture of the utterance level encoder and the decoder.
-* `src/discriminator.py`: The simple FF discriminator used for adversarial training. 
+* `src/discriminator.py`: The simple FF discriminator used for adversarial training.
 
 
 ## Setup
@@ -56,16 +56,28 @@ Depending on the use case and the dataset, 3 other functions in `src/preprocess.
 Options and information about input arguments can be displayed with `python3 src/preprocess.py -h` and e.g. `python3 src/preprocess.py malromur -h`
 ## Training
 All training is contained in `src/trainer.py` and can be initiated from `src/train.py`. 7 types of training/testing are avilable via the `src/train.py t=<type>` positional argument
-* `t=ASRTrainer`: Trains the basline ASR
-* `t=ASRTester`: Tests the baseline ASR
-* `t=LMTrainer`: Trains the character level RNN LM
-* `t=TAETrainer`: Trains the text autoencoder *
-* `t=SAETrainer`: Trains the speech autoencoder *
-* `t=AdvTrainer`: Peroforms adversarial training *
-* `t=Seed`: Performs a combination of `TAETRainer`, `SAETrainer` and `AdvTrainer` to produce a seed model to further train the baseline *
+
+Type | Description | Identifier
+------------ | -------------- | --------------
+`t=ASRTrainer` | Trains the basline ASR | asr
+`t=ASRTester` | Tests the baseline ASR | asr
+`t=LMTrainer` | Trains the character level RNN LM | char_lm
+`t=TAETrainer` | Trains the text autoencoder * | tae
+`t=SAETrainer` | Trains the speech autoencoder * | sae
+`t=AdvTrainer` | Peroforms adversarial training * | adv
+`t=Seed` | Performs a combination of `TAETRainer`, `SAETrainer` and `AdvTrainer` to produce a seed model to further train the baseline * | n/a
 
 (*): Will affect the parameters of the baseline ASR.
 
-All training runs require certain parameters, see `python3 src/train.py -h` for information but most notably a configuration `.yaml` file. An example of a configuration file is found at `./conf/default.yaml` with detailed documentation. This file contains the configuration of all model parts which makes it easier to perform multiple training runs with parameter sharing. 
+The identifier is used to seperate results generated (see usage [here](##results). All training runs require certain parameters, see `python3 src/train.py -h` for information but most notably a configuration `.yaml` file. An example of a configuration file is found [here](/conf/default.yaml) and detailed information here [here](./conf/README.md).
 
 ## Results
+The results produced by training depend on the type of training. Each training type will
+* Store tensorboard logging under `<logdir>/<name>/<identifier>`
+* Save the most recent model at  `<ckpdir>/<name>/<identifier>.cpt`
+* Save the best model at `<ckpdir>/<name>/<identifier>_best.cpt`
+
+### Tensorboard
+This project uses `TensorboardX` to visualize training progress, displaying hypothesis and alignment plots and more. If installed, all generated results can be loaded via `tensorboard --logdir='./<logdir>'` and then visiting `localhost:6006`. To limit loading, a specific experiment can also be loaded via e.g. `tensorboard --logdir='./<logdir>/<name>'`.
+
+

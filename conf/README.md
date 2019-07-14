@@ -12,17 +12,24 @@ opt.learning_rate | The initial learning rate to use for the optimizer. Dependin
 train_index * | Path to training index produced by `./src/preprocess.py`.
 valid_index * | Path to validation index
 test_index  * | Path to test index
-train_batch_size | Training batch size
-valid_batch_size | Validation batch size
-test_batch_size | Test batch size
-n_epohcs | Number of training epochs
-valid_step | Number of steps between validation measurements
-save_step | Number of steps between saving the most current version of the model
-logging_step | Number of steps between verbose logging. Type of training determines what type of logging is output
 
 (*) Currently, the baseline ASR is the only model that supports testing. It is important that these indexes are correctly sorted since we use `torch.pack_padded_sequences` which speeds up training. The sequences to train on must be sorted in decreasing order of original length on the padded axis. So, for e.g. the baseline ASR the index must be sorted by `unpadded_num_frames` and `.src.preprocess.sort_index() can be used exactly for this.
 
 In most cases the index should be sorted by `unpadded_num_frames` but if training is performed on padded text tokens, then sort the index by `s_len` using the same function.
+
+Some additional parameters can be set for each model component seperately and have default values if not set.
+
+Parameter | Description | Default value
+------------ | -------------- | --------------
+valid_step | Number of steps between validation measurements | 500
+save_step | Number of steps between saving the most current version of the model | 1000
+logging_step | Number of steps between verbose logging. Type of training determines what type of logging is output | 250
+train_batch_size | Training batch size | 32
+valid_batch_size | Validation batch size | 32
+test_batch_size | Test batch size | 1
+n_epohcs | Number of training epochs | 5
+
+
 
 ## ASR baseline specific parameters
 Parameter | Description

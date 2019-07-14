@@ -1,5 +1,5 @@
 import os
-import torch 
+import torch
 import random
 import torch.nn as nn
 from torch.nn.utils.rnn import pack_padded_sequence,pad_packed_sequence
@@ -13,10 +13,10 @@ from postprocess import Hypothesis
 from preprocess import EOS_TKN
 
 class ASR(nn.Module):
-    def __init__(self, output_dim: int, encoder_state_size: int, 
-        decoder_state_size: int, mlp_out_size: int, feature_dim: int, 
+    def __init__(self, output_dim: int, encoder_state_size: int,
+        decoder_state_size: int, mlp_out_size: int, feature_dim: int,
         tf_rate: float):
-        
+
         '''
         Input arguments:
         * output_dim (int): The output dimensionality of character predictions
@@ -29,12 +29,12 @@ class ASR(nn.Module):
         more teacher forcing.
         '''
         super(ASR, self).__init__()
-        
+
         enc_out_dim = encoder_state_size * 2
 
         self.encoder = Listener(encoder_state_size, feature_dim)
 
-        self.attention = Attention(mlp_out_size, enc_out_dim, 
+        self.attention = Attention(mlp_out_size, enc_out_dim,
             decoder_state_size)
 
         self.decoder = Speller(decoder_state_size, enc_out_dim)
@@ -48,24 +48,24 @@ class ASR(nn.Module):
         # In terms of loading a model, this is ok since we load
         # the trained weights after doing this initalization
         self.init_parameters()
-    
-    def forward(self, audio_feature, decode_step, teacher=None, 
+
+    def forward(self, audio_feature, decode_step, teacher=None,
         state_len=None):
         '''
         * audio_feature (Tensor): A [batch_size, seq, feature] fbank
         * decode_step (int): The length of the longest target in the batch
-        * teacher (Tensor): A [batch_size, seq] tensor, containing the text 
+        * teacher (Tensor): A [batch_size, seq] tensor, containing the text
         targets of the batch
         * state_len (list): The length of unpadded fbanks in the input.
         '''
 
         # encode_feature shape : [batch_size, ~seq/8, listener.state_size*2]
-        encode_feature, encode_len = self.encoder(audio_feature, state_len) 
+        encode_feature, encode_len = self.encoder(audio_feature, state_len)
 
         # Attention based decoding
         if teacher is not None:
             teacher = self.embed(teacher)
-        
+
         # Init (init char = <SOS>, reset all rnn state and cell)
         self.decoder.init_rnn(encode_feature.shape[0], encode_feature.device)
         self.attention.reset_enc_mem()
@@ -74,17 +74,17 @@ class ASR(nn.Module):
             dtype=torch.long).to(next(self.decoder.parameters()).device))
         output_char_seq = []
         output_att_seq = []
-    
+
         # Decode
         for t in range(decode_step):
             # Attend (inputs current state of first layer, encoded features)
             # shapes: attn_score [batch_size, encode_steps]
             attention_score, context = self.attention(
                 self.decoder.state_list[0], encode_feature, encode_len)
-            # Spell (inputs context + embedded last character)                
+            # Spell (inputs context + embedded last character)
             decoder_input = torch.cat([last_char, context],dim=-1)
             dec_out = self.decoder(decoder_input)
-            
+
             # To char
             cur_char = self.char_trans(dec_out)
 
@@ -105,10 +105,10 @@ class ASR(nn.Module):
         att_output = torch.stack(output_char_seq, dim=1)
 
         # shape: [batch_size, encode_steps, decode_steps]
-        [batch_size, encode_step, _] = encode_feature.shape 
+        [batch_size, encode_step, _] = encode_feature.shape
         output_att_seq = torch.stack(output_att_seq, dim=1)
         return encode_len, att_output, output_att_seq
-    
+
     def decode(self, x, x_len, rnn_lm, mapper, lm_weight):
         '''
         This is only used for inference and testing. Both the ASR
@@ -145,10 +145,10 @@ class ASR(nn.Module):
             # shapes: attn_score [batch_size, encode_steps]
             attention_score, context = self.attention(
                 self.decoder.state_list[0], encode_feature, encode_len)
-            # Spell (inputs context + embedded last character)                
+            # Spell (inputs context + embedded last character)
             decoder_input = torch.cat([last_char, context],dim=-1)
             dec_out = self.decoder(decoder_input)
-            
+
             # To char
             asr_predict = F.log_softmax(self.char_trans(dec_out), dim=-1)
             lm_out, (h1, h2) = rnn_lm(last_char_idx, h1, h2)
@@ -157,9 +157,7 @@ class ASR(nn.Module):
             asr_char = torch.argmax(asr_predict,dim=-1)
             lm_char = torch.argmax(lm_predict,dim=-1)
             predicted_char = torch.argmax(final_predict,dim=-1)
-            print("{} vs. {}".format(mapper.ind_to_char(asr_char.item()), 
-                mapper.ind_to_char(lm_char.item()) ))
-            
+
             last_char_idx = torch.LongTensor([predicted_char]).to(curr_device)
             last_char = self.embed(predicted_char)
 
@@ -171,19 +169,9 @@ class ASR(nn.Module):
                 break
 
             char_predicts.append(mapper.ind_to_char(predicted_char.item()))
-            
             decoding_steps += 1
-
-
         return ''.join(c for c in char_predicts)
-        '''
-        att_output = torch.stack(output_char_seq, dim=1)
 
-        # shape: [batch_size, encode_steps, decode_steps]
-        [batch_size, encode_step, _] = encode_feature.shape 
-        output_att_seq = torch.stack(output_att_seq, dim=1)
-        return encode_len, att_output, output_att_seq
-        '''
     def init_parameters(self):
         def lecun_normal_init_parameters(module):
             for p in module.parameters():
@@ -223,60 +211,16 @@ class ASR(nn.Module):
         set_forget_bias_to_one(self.decoder.layer_1.bias_ih)
         set_forget_bias_to_one(self.decoder.layer_2.bias_ih)
 
-    def beam_decode(self, enc_out, enc_len, max_decode_steps, beam_width=5,
-        charlm=None, lm_weight=0.0):
-        '''
-        Input arguments:
-        * enc_out (Tensor): The output of self.encoder(x)
-        * enc_len (list): The unpadded length output of self.encoder(x)
-        * max_decode_steps (int): The maximum number of decoding steps. We will
-        force encoding to stop at that step in case it has not emitted <eos> for
-        all hypothesis in beam.
-        * beam_width (int): The number of hypothesis to consider at each level
-        of beam search.
-        * charlm (nn.Module): A CharLM model
-        * lm_weight (float): Parameter that determines the influence of the
-        language model during beam rescoring
-        '''
-
-        for t in range(max_decode_steps):
-            # iterate over hypthesis in beam
-            for hyp in best_hyps:
-                # set decoder hidden state of self to that of the hypothesis
-                self.encoder.hidden_state = hyp.get_asr_hidden()
-
-                # calculate attention for the current hypothesis at the current
-                # timestep
-                attention_score, context = self.attention(
-                    self.decoder.state_list[0], encode_feature, encode_len)
-
-                # Spell (inputs context + embedded last character)                
-                decoder_input = torch.cat([hyp.get_last_char(), context], dim=-1)
-                dec_out = self.decoder(decoder_input)
-                print(dec_out.shape)
-                # To char
-                cur_char = self.char_trans(dec_out)
-                cur_char = F.log_softmax(cur_char, dim=-1) # softmax over characters
-
-                # rescore beams with charlm
-                if charlm is not None and lm_weight > 0.0:
-                    lm_out, lm_hidden = charlm(hyp.get_last_char_idx(), hyp.get_lm_hidden())
-                    
-                    # add LM prediction to complete prediction
-                    print(lm_out.shape)
-                    cur_char +=  self.lm_weight * F.log_softmax(lm_out.squeeze, dim=-1)
-
-
 class Listener(nn.Module):
     def __init__(self, state_size, feature_dim):
         '''
         Input arguments:
         * state_size (int): The state size of pBLSTM units
         * feature_dim (int): The feature dimensionality of the
-        input to the listener. 
+        input to the listener.
         '''
         super(Listener, self).__init__()
-        
+
         self.state_size = state_size
         self.out_dim = 2 * self.state_size
 
@@ -290,7 +234,7 @@ class Listener(nn.Module):
         self.blstm_1 = pBLSTM(feature_dim, self.state_size)
         self.blstm_2 = pBLSTM(self.state_size*2*2, self.state_size)
         self.blstm_3 = pBLSTM(self.state_size*2*2, self.state_size)
-        self.blstm_4 = nn.LSTM(self.state_size*2*2, self.state_size, 
+        self.blstm_4 = nn.LSTM(self.state_size*2*2, self.state_size,
             bidirectional=True)
 
     def get_outdim(self):
@@ -309,11 +253,11 @@ class Listener(nn.Module):
         * x (Tensor): A [batch_size, seq/8, state_size*2] shaped tensor
         * state_len (list): The unpadded lengths of each feature
         '''
-        x, _, state_len = self.blstm_1(x, state_len=state_len, 
+        x, _, state_len = self.blstm_1(x, state_len=state_len,
             pack_input=pack_input)
-        x, _, state_len = self.blstm_2(x, state_len=state_len, 
+        x, _, state_len = self.blstm_2(x, state_len=state_len,
             pack_input=pack_input)
-        x, _, state_len = self.blstm_3(x, state_len=state_len, 
+        x, _, state_len = self.blstm_3(x, state_len=state_len,
             pack_input=pack_input)
         x, _, = self.blstm_4(x)
 
@@ -333,7 +277,7 @@ class Speller(nn.Module):
         self.layer_1 = nn.LSTMCell(
             input_size=encoder_out_size+state_size,
             hidden_size=state_size)
-        
+
         self.layer_2 = nn.LSTMCell(
             input_size=state_size,
             hidden_size=state_size)
@@ -362,11 +306,11 @@ class Speller(nn.Module):
             [c.clone().detach().cpu() for c in self.cell_list]
 
     @hidden_state.setter
-    def hidden_state(self, state): # state is a tuple of two 
+    def hidden_state(self, state): # state is a tuple of two
         device = self.state_list[0].device
         self.state_list = [s.to(device) for s in state[0]]
         self.cell_list = [c.to(device) for c in state[1]]
-    
+
     def forward(self, input_context):
         '''
         Input arguments:
@@ -378,10 +322,10 @@ class Speller(nn.Module):
 
         self.state_list[1], self.cell_list[1] = self.layer_2(
             self.state_list[0], (self.state_list[1], self.cell_list[1]))
-        
+
         return self.state_list[-1]
 
-class Attention(nn.Module):  
+class Attention(nn.Module):
     def __init__(self, mlp_out_size, encoder_out_size, decoder_state_size):
         super(Attention,self).__init__()
 
@@ -389,9 +333,9 @@ class Attention(nn.Module):
 
         self.phi = nn.Linear(decoder_state_size, mlp_out_size, bias=False)
         self.psi = nn.Linear(encoder_out_size, mlp_out_size)
-        
+
         self.comp_listener_feature = None
-    
+
     def reset_enc_mem(self):
         self.comp_listener_feature = None
         self.state_mask = None
@@ -399,22 +343,22 @@ class Attention(nn.Module):
     def forward(self, decoder_state, listener_feature, state_len):
         '''
         Input arguments:
-        * decoder_state (Tensor): A tensor, containing the 
+        * decoder_state (Tensor): A tensor, containing the
         "last" output of the listener
-        * listener_feature (Tensor): A batch of shape 
-        [bs, ~seq/8, listener.out_dim], containing the output 
+        * listener_feature (Tensor): A batch of shape
+        [bs, ~seq/8, listener.out_dim], containing the output
         from the listener
-        * state_len (list like): contains the unpadded length 
+        * state_len (list like): contains the unpadded length
         of each fbank in the current batch. In the case of the text
         auto encoder, these should be the lengths of each unpadded noised
         string in the batch.
-        
+
         Returns:
-        * attention_score (Tensor): which is 
+        * attention_score (Tensor): which is
         softmax( phi(decoder_state).T @ psi(listener_feature))
         * context (Tensor): which is attention_score @ listener_feature
         '''
-        
+
         # Store enc state to save time
         if self.comp_listener_feature is None:
             # Maskout attention score for padded states
@@ -425,7 +369,7 @@ class Attention(nn.Module):
             of [4, 6, 2]
             | 1 1 1 1 0 0 0 |
             | 1 1 1 1 1 1 0 |
-            | 1 1 0 0 0 0 0 | 
+            | 1 1 0 0 0 0 0 |
             '''
             self.state_mask = np.zeros((listener_feature.shape[0],
                 listener_feature.shape[1]))
@@ -438,7 +382,7 @@ class Attention(nn.Module):
 
         comp_decoder_state =  torch.tanh(self.phi(decoder_state))
 
-        energy = torch.bmm(self.comp_listener_feature, 
+        energy = torch.bmm(self.comp_listener_feature,
             comp_decoder_state.unsqueeze(2)).squeeze(dim=2)
         energy.masked_fill_(self.state_mask, -float("Inf"))
         attention_score = self.softmax(energy)
@@ -456,12 +400,12 @@ class pBLSTM(nn.Module):
         '''
 
         super(pBLSTM, self).__init__()
-        self.layer = nn.LSTM(in_dim, out_dim, bidirectional=True, 
+        self.layer = nn.LSTM(in_dim, out_dim, bidirectional=True,
             batch_first=True)
 
-    def forward(self, input_x, state=None, state_len=None, 
+    def forward(self, input_x, state=None, state_len=None,
         pack_input=False):
-        
+
         # Forward RNN
         if pack_input:
             assert state_len is not None, \
@@ -475,13 +419,13 @@ class pBLSTM(nn.Module):
 
         # Perform Downsampling
         output = self.downsample(output)
-        
+
         if state_len is not None:
             state_len=[int(s/2) for s in state_len]
             return output, hidden, state_len
 
         return output, hidden
-    
+
     def downsample(self, x):
         '''
         Downsamples the time-axis by a factor of 2
@@ -490,7 +434,7 @@ class pBLSTM(nn.Module):
             x: a [batch, seq, feature] tensor
         Out:
             x: a [batch, seq/2, feature*2] tensor.
-        (Note: If t is not divisible by two, the last frame 
+        (Note: If t is not divisible by two, the last frame
         will be dropped)
         '''
         t_dim = x.shape[1]
@@ -500,7 +444,7 @@ class pBLSTM(nn.Module):
             # drop the last frame if odd number of frames
             x = x[:, :t_dim-1, :]
             t_dim -= 1
-        
+
         # concat consecutive frames
         x = x.contiguous().view([-1, int(t_dim/2), f_dim*2])
         return x
