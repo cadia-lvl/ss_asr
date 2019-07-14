@@ -2,16 +2,6 @@
 ## A semi-supervised sequence-to-sequence ASR model
 A PyTorch implementation of the model proposed in [A Semi-Supervised Approach to Automatic Speech Recognition Training For the Icelandic Language](thesis.pdf)
 
-## Architecture
-Blablabla
-
-* `src/lm.py`: The character level language model
-* `src/asr.py`: The baseline ASR, similar to _Listen, Attend & Spell_.
-* `src/text_autoencoder.py`: The `forward()` of the whole autoencoder as well as the architecture of the encoder.
-* `src/speech_autoencoder.py`: The `forward()` of the whole autoencoder as well as the architecture of the utterance level encoder and the decoder.
-* `src/discriminator.py`: The simple FF discriminator used for adversarial training.
-
-
 ## Setup
 Install dependencies using `pip install -r requirements.txt`
 The most notable dependencies here are
@@ -69,7 +59,7 @@ Type | Description | Identifier
 
 (*): Will affect the parameters of the baseline ASR.
 
-The identifier is used to seperate results generated (see usage [here](#results). All training runs require certain parameters, see `python3 src/train.py -h` for information but most notably a configuration `.yaml` file. An example of a configuration file is found [here](/conf/default.yaml) and detailed information here [here](./conf/README.md).
+The identifier is used to seperate results generated (see usage [here](#results). All training runs require certain parameters, see `python3 src/train.py -h` for information but most notably a configuration `.yaml` file. An example of a configuration file is found [here](/conf/default.yaml) and detailed information [here](./conf/README.md).
 
 ## Results
 The results produced by training depend on the type of training. Each training type will
