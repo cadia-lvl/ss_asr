@@ -4,7 +4,7 @@ astroid==2.1.0
 audioread==2.1.6
 cloudpickle==0.7.0
 cycler==0.10.0
-dask==1.1.1
+dask==2021.10.0
 decorator==4.3.2
 editdistance==0.5.3
 gast==0.2.2
